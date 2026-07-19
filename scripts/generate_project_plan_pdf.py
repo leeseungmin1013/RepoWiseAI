@@ -213,7 +213,7 @@ def make_table(lines: list[str], style_map: dict[str, ParagraphStyle], width: fl
 
 
 def make_code_block(code: str, style_map: dict[str, ParagraphStyle], width: float) -> Table:
-    pre = Preformatted(escape(code.rstrip()), style_map["code"], maxLineLength=96)
+    pre = Preformatted(code.rstrip(), style_map["code"], maxLineLength=96)
     table = Table([[pre]], colWidths=[width], hAlign="LEFT")
     table.setStyle(
         TableStyle(

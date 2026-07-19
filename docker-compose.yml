@@ -1,0 +1,35 @@
+name: repowise-ai
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: repowise
+      POSTGRES_USER: repowise
+      POSTGRES_PASSWORD: repowise
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - repowise_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U repowise -d repowise"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - repowise_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  repowise_postgres:
+  repowise_redis:

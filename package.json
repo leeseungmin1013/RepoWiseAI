@@ -1,0 +1,18 @@
+{
+  "name": "repowise-ai",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.7.0",
+  "scripts": {
+    "dev:api": "uv run --project apps/api uvicorn app.main:app --reload --port 8000",
+    "dev:worker": "uv run --project apps/api python -m app.workers.runner",
+    "dev:web": "pnpm --filter @repowise/web dev",
+    "build:web": "pnpm --filter @repowise/web build",
+    "lint:web": "pnpm --filter @repowise/web lint",
+    "test:web": "pnpm --filter @repowise/web test",
+    "lint:api": "uv run --project apps/api ruff check apps/api",
+    "test:api": "uv run --project apps/api pytest -q",
+    "eval:retrieval": "uv run --project apps/api python -m app.evaluation.retrieval",
+    "db:migrate": "uv run --project apps/api alembic -c apps/api/alembic.ini upgrade head"
+  }
+}

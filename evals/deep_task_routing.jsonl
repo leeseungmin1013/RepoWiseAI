@@ -1,0 +1,40 @@
+{"id":"route-ko-001","utterance":"이 함수가 무슨 일을 해?","expected_route":"grounded","expected_kind":null,"reason":"현재 선택한 함수 하나의 책임을 묻는 저장소 내부 사실 질문이다."}
+{"id":"route-ko-002","utterance":"지금 선택한 코드 한 줄씩 설명해 줘.","expected_route":"grounded","expected_kind":null,"reason":"선택된 코드 범위의 직접 설명으로 다중 파일 분석이 필요하지 않다."}
+{"id":"route-ko-003","utterance":"이 파일에서 API 요청이 어디로 가?","expected_route":"grounded","expected_kind":null,"reason":"현재 파일의 호출 관계를 근거로 짧게 답할 수 있다."}
+{"id":"route-ko-004","utterance":"방금 설명한 개념을 더 쉽게 말해 줘.","expected_route":"grounded","expected_kind":null,"reason":"기존 답변을 쉽게 바꾸는 짧은 후속 질문이다."}
+{"id":"route-ko-005","utterance":"다음 레슨으로 넘어가 줘.","expected_route":"grounded","expected_kind":null,"reason":"심층 생성이 아닌 결정적 학습 진행 명령이다."}
+{"id":"route-ko-006","utterance":"이해했어, 다음 문제 내 줘.","expected_route":"grounded","expected_kind":null,"reason":"현재 학습 단계에서 바로 처리할 수 있는 진행 요청이다."}
+{"id":"route-ko-007","utterance":"여기서 왜 await를 써?","expected_route":"grounded","expected_kind":null,"reason":"선택 코드의 국소 언어 개념을 설명하는 질문이다."}
+{"id":"route-ko-008","utterance":"이 에러 메시지가 뜻하는 게 뭐야?","expected_route":"grounded","expected_kind":null,"reason":"현재 문맥의 오류를 해석하는 짧은 근거 기반 질문이다."}
+{"id":"route-ko-009","utterance":"이 클래스 책임을 두 문장으로 요약해 줘.","expected_route":"grounded","expected_kind":null,"reason":"단일 클래스의 책임을 짧게 요약하도록 범위가 제한되어 있다."}
+{"id":"route-ko-010","utterance":"자세한 전체 흐름 말고 이 함수의 반환값만 알려 줘.","expected_route":"grounded","expected_kind":null,"reason":"심층 표현이 부정되었고 반환값 하나만 요구하는 경계 사례다."}
+{"id":"route-ko-011","utterance":"로드맵은 바꾸지 말고 현재 단계가 뭔지만 알려 줘.","expected_route":"grounded","expected_kind":null,"reason":"로드맵 변경을 명시적으로 거부하고 현재 상태 조회만 요청한다."}
+{"id":"route-ko-012","utterance":"외부 자료 찾지 말고 저장소 안의 근거로만 답해 줘.","expected_route":"grounded","expected_kind":null,"reason":"외부 조사를 부정하고 기존 저장소 근거만 사용하도록 제한한다."}
+{"id":"route-ko-013","utterance":"이 수정이 지금 보고 있는 테스트 하나를 깨뜨릴까?","expected_route":"grounded","expected_kind":null,"reason":"영향 질문이지만 현재 테스트 하나로 범위를 좁힌 경계 사례다."}
+{"id":"route-ko-014","utterance":"비교는 필요 없고 두 함수 중 지금 호출되는 쪽만 알려 줘.","expected_route":"grounded","expected_kind":null,"reason":"비교 작업을 부정하고 현재 호출 사실 하나만 확인한다."}
+{"id":"route-ko-015","utterance":"왜 이런 구조인지 깊게 말고 현재 파일 기준으로만 설명해 줘.","expected_route":"grounded","expected_kind":null,"reason":"깊은 구조 분석을 부정하고 단일 파일 설명으로 한정한다."}
+{"id":"route-ko-016","utterance":"인증 요청이 프론트에서 DB까지 가는 전체 흐름을 깊게 설명해 줘.","expected_route":"deep","expected_kind":"deep_explanation","reason":"여러 계층을 가로지르는 전체 실행 흐름과 심층 설명을 명시했다."}
+{"id":"route-ko-017","utterance":"이 저장소의 검색 결과가 답변으로 바뀌는 과정을 처음부터 끝까지 알려 줘.","expected_route":"deep","expected_kind":"deep_explanation","reason":"검색부터 답변 생성까지 다중 컴포넌트 생명주기를 요구한다."}
+{"id":"route-ko-018","utterance":"왜 큐와 API 서버를 분리한 구조인지 설계 근거까지 자세히 설명해 줘.","expected_route":"deep","expected_kind":"deep_explanation","reason":"구조적 선택의 이유와 설계 근거를 깊게 종합해야 한다."}
+{"id":"route-ko-019","utterance":"현재 학습 진도 계산이 어떤 모델과 서비스들을 거치는지 심층 분석해 줘.","expected_route":"deep","expected_kind":"deep_explanation","reason":"여러 모델과 서비스 사이의 처리 흐름을 심층 분석하는 요청이다."}
+{"id":"route-ko-020","utterance":"이 함수 설명은 들었는데 주변 컴포넌트와 어떻게 협력하는지도 파고들어 줘.","expected_route":"deep","expected_kind":"deep_explanation","reason":"명시적 심층 키워드 없이도 주변 컴포넌트까지 범위를 확장한 경계 사례다."}
+{"id":"route-ko-021","utterance":"HybridRetriever가 점수를 합치는 원리와 실패 시나리오를 딥 다이브해 줘.","expected_route":"deep","expected_kind":"deep_explanation","reason":"알고리즘 원리와 실패 양상을 함께 다루는 딥 다이브 요청이다."}
+{"id":"route-ko-022","utterance":"음성 턴 하나가 저장되고 응답될 때까지 전체 생명주기를 설명해 줘.","expected_route":"deep","expected_kind":"deep_explanation","reason":"음성 입력부터 저장과 응답까지 여러 단계의 전체 흐름을 요구한다."}
+{"id":"route-ko-023","utterance":"짧게 답하기 어려워도 괜찮으니 이 아키텍처가 이렇게 된 이유를 근거와 함께 풀어 줘.","expected_route":"deep","expected_kind":"deep_explanation","reason":"직접적인 키워드는 약하지만 장문 구조 설명과 근거 종합을 허용한 경계 사례다."}
+{"id":"route-ko-024","utterance":"이 API 응답 스키마를 바꾸면 프론트와 테스트 어디까지 영향이 가?","expected_route":"deep","expected_kind":"impact_analysis","reason":"계약 변경이 여러 소비자에 미치는 전체 변경 범위를 묻는다."}
+{"id":"route-ko-025","utterance":"DeepTask status에 새 값을 추가했을 때 파급 범위를 분석해 줘.","expected_route":"deep","expected_kind":"impact_analysis","reason":"상태 값 변경의 다중 계층 파급 효과를 분석해야 한다."}
+{"id":"route-ko-026","utterance":"이 마이그레이션을 배포하면 기존 데이터와 롤백에 어떤 영향이 있어?","expected_route":"deep","expected_kind":"impact_analysis","reason":"데이터 호환성과 배포 및 롤백 영향을 함께 검토해야 한다."}
+{"id":"route-ko-027","utterance":"검색 청크 크기를 바꾸면 검색 품질, 비용, 테스트에 생길 사이드 이펙트를 알려 줘.","expected_route":"deep","expected_kind":"impact_analysis","reason":"하나의 설정 변경이 품질과 비용과 테스트에 주는 부작용을 요구한다."}
+{"id":"route-ko-028","utterance":"voice session 종료 처리를 수정하려는데 관련 파일과 기능을 모두 찾아 영향도 알려 줘.","expected_route":"deep","expected_kind":"impact_analysis","reason":"관련 파일 전체와 사용자 기능의 영향도를 추적하는 요청이다."}
+{"id":"route-ko-029","utterance":"함수 이름 하나 바꾸는 건데 정말 한 파일만 고치면 되는지 확인해 줘.","expected_route":"deep","expected_kind":"impact_analysis","reason":"작은 변경처럼 보이지만 모든 참조와 소비자를 확인해야 하는 경계 사례다."}
+{"id":"route-ko-030","utterance":"이 의존성을 제거해도 되는지 호출처와 배포 설정까지 변경 범위를 점검해 줘.","expected_route":"deep","expected_kind":"impact_analysis","reason":"호출처와 배포 설정을 포함하는 광범위한 변경 영향 분석이다."}
+{"id":"route-ko-031","utterance":"이 저장소를 처음 배우는 사람용 2주 학습 로드맵을 만들어 줘.","expected_route":"deep","expected_kind":"roadmap_proposal","reason":"기간과 대상이 있는 전체 학습 로드맵 생성을 요청한다."}
+{"id":"route-ko-032","utterance":"현재 숙련도를 반영해 다음 학습 순서를 다시 짜 줘.","expected_route":"deep","expected_kind":"roadmap_proposal","reason":"사용자 숙련도에 따라 학습 경로를 재계획해야 한다."}
+{"id":"route-ko-033","utterance":"백엔드부터 볼지 프론트부터 볼지 단계별 커리큘럼을 제안해 줘.","expected_route":"deep","expected_kind":"roadmap_proposal","reason":"여러 학습 영역의 순서와 단계별 커리큘럼을 제안하는 요청이다."}
+{"id":"route-ko-034","utterance":"지금 계획이 너무 어려우니 선수 개념을 추가한 학습 경로로 바꿔 줘.","expected_route":"deep","expected_kind":"roadmap_proposal","reason":"기존 계획에 선수 개념을 넣어 경로를 변경하도록 요청한다."}
+{"id":"route-ko-035","utterance":"다음 한 단계만 말하지 말고 완료 기준이 있는 전체 공부 계획을 세워 줘.","expected_route":"deep","expected_kind":"roadmap_proposal","reason":"로드맵이라는 단어 없이도 전체 계획과 완료 기준을 요구한 경계 사례다."}
+{"id":"route-ko-036","utterance":"현재 OpenAI 공식 문서에서 Responses API 권장 방식을 찾아 줘.","expected_route":"deep","expected_kind":"research_materials","reason":"외부 공식 문서의 현재 권장 사항을 탐색해야 한다."}
+{"id":"route-ko-037","utterance":"이 라이브러리 최신 버전의 breaking change를 자료 조사해 줘.","expected_route":"deep","expected_kind":"research_materials","reason":"시간에 따라 변하는 외부 최신 릴리스 자료 조사가 필요하다."}
+{"id":"route-ko-038","utterance":"WebRTC 음성 튜터 구현 사례와 공식 레퍼런스를 탐색해 줘.","expected_route":"deep","expected_kind":"research_materials","reason":"외부 구현 사례와 공식 자료를 함께 수집하는 요청이다."}
+{"id":"route-ko-039","utterance":"저장소 근거만으로 부족하니 외부 최신 자료를 찾아 비교해 줘.","expected_route":"deep","expected_kind":"research_materials","reason":"저장소 밖의 최신 자료 탐색과 비교를 명시적으로 요구한다."}
+{"id":"route-ko-040","utterance":"기억으로 답하지 말고 출처와 확인 날짜가 있는 자료로 설명해 줘.","expected_route":"deep","expected_kind":"research_materials","reason":"자료 조사 표현은 없지만 검증된 출처와 확인 시점을 요구한 경계 사례다."}

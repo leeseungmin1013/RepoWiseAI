@@ -1,0 +1,135 @@
+.dock {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid var(--border, #d5dde1);
+  background: var(--surface-muted, #f6f8f9);
+  padding: 10px 12px;
+}
+
+.remoteAudio {
+  display: none;
+}
+
+.context {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.headingRow,
+.status,
+.controls {
+  display: flex;
+  align-items: center;
+}
+
+.headingRow {
+  min-width: 0;
+  gap: 7px;
+}
+
+.headingRow strong {
+  font-size: 11px;
+}
+
+.disclosure {
+  border-radius: 3px;
+  background: #e7ecee;
+  color: #65737a;
+  font-size: 8px;
+  padding: 2px 5px;
+}
+
+.lesson,
+.transcript,
+.error {
+  overflow: hidden;
+  font-size: 9px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lesson {
+  color: var(--muted, #68757d);
+}
+
+.status {
+  gap: 5px;
+  color: #415057;
+  font-size: 9px;
+}
+
+.statusDot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: #8c999f;
+}
+
+.statusDotConnected {
+  background: var(--teal, #087f73);
+}
+
+.statusDotError {
+  background: var(--coral, #b84d3b);
+}
+
+.transcript {
+  color: var(--teal-dark, #05685f);
+  font-style: italic;
+}
+
+.error {
+  color: #8b3528;
+}
+
+.controls {
+  gap: 6px;
+}
+
+.startButton,
+.talkButton,
+.stopButton {
+  min-height: 32px;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 0 10px;
+}
+
+.startButton,
+.talkButton {
+  border: 1px solid var(--teal-dark, #05685f);
+  background: var(--teal, #087f73);
+  color: #fff;
+}
+
+.talkButtonActive {
+  border-color: #8b3528;
+  background: var(--coral, #b84d3b);
+}
+
+.stopButton {
+  border: 1px solid var(--border-strong, #b9c5ca);
+  background: #fff;
+  color: #526067;
+}
+
+@media (max-width: 460px) {
+  .dock {
+    grid-template-columns: 1fr;
+  }
+
+  .controls {
+    width: 100%;
+  }
+
+  .startButton,
+  .talkButton {
+    flex: 1;
+  }
+}

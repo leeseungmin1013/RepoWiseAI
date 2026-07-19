@@ -10,6 +10,9 @@ __pycache__/
 .mypy_cache/
 .venv/
 venv/
+*.egg-info/
+.coverage
+htmlcov/
 
 # Node / frontend build output
 node_modules/
@@ -17,6 +20,11 @@ node_modules/
 dist/
 build/
 coverage/
+pnpm-debug.log*
+
+# Local analysis data
+.data/
+analysis-workspaces/
 
 # Environment
 .env
@@ -28,4 +36,3 @@ coverage/
 Thumbs.db
 .vscode/
 .idea/
-

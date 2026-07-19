@@ -1,0 +1,31 @@
+{
+  "name": "p-map retrieval baseline v1",
+  "repository": "sindresorhus/p-map",
+  "cases": [
+    {
+      "id": "symbol-location-pmap",
+      "query": "pMap 함수는 어디에 정의되어 있어?",
+      "expected_any": [{ "path": "index.js", "symbol": "pMap" }]
+    },
+    {
+      "id": "korean-entrypoint",
+      "query": "이 프로젝트의 진입점은 어디야?",
+      "expected_any": [{ "path": "index.js" }]
+    },
+    {
+      "id": "flow-pmap-iterable",
+      "query": "pMapIterable 함수의 실행 흐름을 설명해줘",
+      "expected_any": [{ "path": "index.js", "symbol": "pMapIterable" }]
+    },
+    {
+      "id": "performance-test",
+      "query": "pMapSkip 성능 테스트는 어디에 있어?",
+      "expected_any": [{ "path": "test-multiple-pmapskips-performance.js" }]
+    },
+    {
+      "id": "type-definition",
+      "query": "공개 타입 정의는 어느 파일에 있어?",
+      "expected_any": [{ "path": "index.d.ts" }]
+    }
+  ]
+}

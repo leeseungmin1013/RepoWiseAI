@@ -16,6 +16,7 @@ from app.core.db import SessionLocal, get_db
 from app.models import ChatSession, DeepTask, FileRecord, LearningSession
 from app.queue import cancel_deep_task_job, enqueue_deep_task
 from app.schemas import (
+    ChangeBriefResponse,
     ChatAnswerResponse,
     DeepTaskCreate,
     DeepTaskErrorResponse,
@@ -39,11 +40,12 @@ def _utc_now() -> datetime:
 def _task_response(task: DeepTask) -> DeepTaskResponse:
     result = None
     if task.result_payload:
-        result_schema = (
-            ResearchMaterialsResponse
-            if task.kind == "research_materials"
-            else ChatAnswerResponse
-        )
+        if task.kind == "research_materials":
+            result_schema = ResearchMaterialsResponse
+        elif getattr(task, "context_json", {}).get("scope") == "navigation":
+            result_schema = ChangeBriefResponse
+        else:
+            result_schema = ChatAnswerResponse
         result = result_schema.model_validate(task.result_payload)
     error = (
         DeepTaskErrorResponse(
@@ -144,6 +146,7 @@ def create_deep_task(
         idempotency_key=idempotency_key,
         prompt=payload.prompt.strip(),
         selection=selection,
+        context_json={"scope": "learning"},
         teaching_style=chat_session.preferred_style,
         status="queued",
         progress=0,
@@ -167,6 +170,97 @@ def create_deep_task(
         return _task_response(existing)
     db.refresh(task)
 
+    _enqueue_task(db, task)
+    return _task_response(task)
+
+
+@router.post(
+    "/chat/sessions/{session_id}/deep-tasks",
+    response_model=DeepTaskResponse,
+    response_model_exclude_none=True,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def create_navigation_deep_task(
+    session_id: str,
+    payload: DeepTaskCreate,
+    db: SessionDep,
+    idempotency_key: IdempotencyKey,
+):
+    chat_session = db.get(ChatSession, session_id)
+    if chat_session is None:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    if payload.kind != "impact_analysis":
+        raise HTTPException(
+            status_code=422,
+            detail="Navigation deep tasks only support impact_analysis",
+        )
+    idempotency_key = idempotency_key.strip()
+    if not idempotency_key or len(idempotency_key) > 200:
+        raise HTTPException(status_code=422, detail="Idempotency-Key is invalid")
+    existing = db.scalar(
+        select(DeepTask).where(
+            DeepTask.chat_session_id == chat_session.id,
+            DeepTask.idempotency_key == idempotency_key,
+        )
+    )
+    if existing is not None:
+        if existing.status == "queued" and not existing.rq_job_id:
+            _enqueue_task(db, existing)
+        return _task_response(existing)
+
+    navigation_context = (
+        payload.navigation_context.model_dump(exclude_none=True)
+        if payload.navigation_context
+        else {}
+    )
+    requested_selection = (
+        payload.selection.model_dump()
+        if payload.selection
+        else navigation_context.get("selection") or chat_session.current_selection or {}
+    )
+    if not requested_selection:
+        raise HTTPException(
+            status_code=422,
+            detail="Change Brief requires a selected code range",
+        )
+    selection = _validated_selection(db, chat_session.snapshot_id, requested_selection)
+    navigation_context["selection"] = selection
+    chat_session.navigation_context = navigation_context
+    chat_session.current_selection = selection
+    task = DeepTask(
+        learning_session_id=None,
+        chat_session_id=chat_session.id,
+        kind="impact_analysis",
+        modality=payload.modality,
+        idempotency_key=idempotency_key,
+        prompt=payload.prompt.strip(),
+        selection=selection,
+        context_json={
+            "scope": "navigation",
+            "navigation_context": navigation_context,
+        },
+        teaching_style=chat_session.preferred_style,
+        status="queued",
+        progress=0,
+        message="변경 영향 분석이 대기열에 등록되었습니다.",
+    )
+    db.add(task)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = db.scalar(
+            select(DeepTask).where(
+                DeepTask.chat_session_id == chat_session.id,
+                DeepTask.idempotency_key == idempotency_key,
+            )
+        )
+        if existing is None:
+            raise
+        if existing.status == "queued" and not existing.rq_job_id:
+            _enqueue_task(db, existing)
+        return _task_response(existing)
+    db.refresh(task)
     _enqueue_task(db, task)
     return _task_response(task)
 

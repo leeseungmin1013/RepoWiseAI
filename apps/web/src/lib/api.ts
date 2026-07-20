@@ -109,6 +109,124 @@ export type StartHere = {
   suggested_goals: string[];
 };
 
+export type ProjectMapConfidence = "verified" | "inferred" | "unknown";
+
+export type ProjectMapEvidence = {
+  file_id: string;
+  path: string;
+  start_line: number;
+  end_line: number;
+  reason: string;
+};
+
+export type ProjectMapTechnology = {
+  name: string;
+  category: string;
+  confidence: ProjectMapConfidence;
+  evidence: ProjectMapEvidence[];
+};
+
+export type ProjectMapCapability = {
+  id: string;
+  name: string;
+  description: string;
+  confidence: ProjectMapConfidence;
+  evidence: ProjectMapEvidence[];
+};
+
+export type ProjectMapSystemArea = {
+  id: string;
+  name: string;
+  description: string;
+  confidence: ProjectMapConfidence;
+  evidence: ProjectMapEvidence[];
+};
+
+export type ProjectMapExternalService = {
+  name: string;
+  description: string;
+  confidence: ProjectMapConfidence;
+  evidence: ProjectMapEvidence[];
+};
+
+export type ProjectMapEnvironmentVariable = {
+  name: string;
+  description: string;
+  confidence: ProjectMapConfidence;
+  evidence: ProjectMapEvidence[];
+};
+
+export type ProjectMapReadFirst = ProjectMapEvidence & {
+  confidence: ProjectMapConfidence;
+};
+
+export type ProjectMap = {
+  repository_name: string;
+  snapshot_id: string;
+  commit_sha: string;
+  summary: string;
+  summary_confidence: ProjectMapConfidence;
+  tech_stack: ProjectMapTechnology[];
+  capabilities: ProjectMapCapability[];
+  system_areas: ProjectMapSystemArea[];
+  external_services: ProjectMapExternalService[];
+  environment_variables: ProjectMapEnvironmentVariable[];
+  read_first: ProjectMapReadFirst[];
+  limitations: string[];
+};
+
+export type FeatureFlowEvidence = ProjectMapEvidence;
+
+export type FeatureFlowSummary = {
+  id: string;
+  title: string;
+  user_goal: string;
+  trigger: string;
+  outcome: string;
+  step_count: number;
+  involved_areas: string[];
+  confidence: ProjectMapConfidence;
+  evidence_coverage: number;
+  entry_evidence: FeatureFlowEvidence;
+};
+
+export type FeatureFlowCatalog = {
+  repository_name: string;
+  snapshot_id: string;
+  commit_sha: string;
+  analysis_version: string;
+  flows: FeatureFlowSummary[];
+  limitations: string[];
+};
+
+export type FeatureFlowStep = {
+  id: string;
+  ordinal: number;
+  title: string;
+  role: string;
+  executes_when: string;
+  input: string;
+  output_or_side_effect: string;
+  previous_step_id: string | null;
+  next_step_id: string | null;
+  relation_type: string;
+  confidence: ProjectMapConfidence;
+  evidence: FeatureFlowEvidence[];
+};
+
+export type FeatureFlowDetail = {
+  id: string;
+  title: string;
+  user_goal: string;
+  trigger: string;
+  outcome: string;
+  normal_steps: FeatureFlowStep[];
+  failure_steps: FeatureFlowStep[];
+  involved_areas: string[];
+  confidence: ProjectMapConfidence;
+  limitations: string[];
+};
+
 export type Health = {
   status: "ready" | "degraded";
   version: string;
@@ -119,6 +237,52 @@ export type CodeSelection = {
   file_id: string;
   start_line: number;
   end_line: number;
+};
+
+export type CodeExplanationDepth = "minimum" | "behavior" | "syntax" | "analogy" | "change";
+
+export type CodeExplanationEvidence = {
+  file_id: string;
+  path: string;
+  start_line: number;
+  end_line: number;
+  reason: string;
+};
+
+export type CodeExplanationRelatedStep = {
+  relation_type: string;
+  title: string;
+  target: string;
+  confidence: ProjectMapConfidence;
+  evidence: CodeExplanationEvidence;
+};
+
+export type CodeExplanationSyntaxSegment = {
+  node_type: string;
+  start_line: number;
+  end_line: number;
+  explanation: string;
+};
+
+export type CodeExplanation = {
+  id: string;
+  snapshot_id: string;
+  analysis_version: string;
+  depth: CodeExplanationDepth;
+  selection: CodeSelection;
+  purpose: string;
+  executes_when: string;
+  input: string;
+  output_or_side_effect: string;
+  project_role: string;
+  change_impact: string;
+  required_concepts: string[];
+  related_steps: CodeExplanationRelatedStep[];
+  syntax_segments: CodeExplanationSyntaxSegment[];
+  analogy: string | null;
+  confidence: ProjectMapConfidence;
+  evidence: CodeExplanationEvidence[];
+  limitations: string[];
 };
 
 export type Citation = {
@@ -143,6 +307,7 @@ export type ChatSession = {
   goal: string | null;
   preferred_style: string;
   learning_session_id: string | null;
+  navigation_context: NavigationContext;
   created_at: string;
   updated_at: string;
 };
@@ -185,7 +350,50 @@ export type DeepTaskRequest = {
   kind: DeepTaskKind;
   prompt: string;
   selection?: CodeSelection | null;
+  navigation_context?: NavigationContext | null;
   modality: "text" | "voice";
+};
+
+export type NavigationContext = {
+  feature_key?: string | null;
+  flow_step_id?: string | null;
+  selection?: CodeSelection | null;
+  explanation_depth?: CodeExplanationDepth | null;
+};
+
+export type ChangeBriefRisk = "low" | "medium" | "high" | "unknown";
+
+export type ChangeBriefCandidateLocation = {
+  title: string;
+  reason: string;
+  confidence: ProjectMapConfidence;
+  evidence: CodeExplanationEvidence;
+};
+
+export type ChangeBriefImpact = {
+  title: string;
+  description: string;
+  relation_type: string;
+  confidence: ProjectMapConfidence;
+  evidence: CodeExplanationEvidence[];
+};
+
+export type ChangeBrief = {
+  id: string;
+  snapshot_id: string;
+  analysis_version: string;
+  request_summary: string;
+  selection: CodeSelection;
+  candidate_locations: ChangeBriefCandidateLocation[];
+  confirmed_direct_impacts: ChangeBriefImpact[];
+  possible_impacts_to_verify: ChangeBriefImpact[];
+  unknown_boundaries: string[];
+  risk_level: ChangeBriefRisk;
+  risk_rationale: string;
+  verification_steps: string[];
+  rollback_guidance: string[];
+  evidence: CodeExplanationEvidence[];
+  limitations: string[];
 };
 
 export type DeepTaskError = {
@@ -211,7 +419,7 @@ export type ResearchMaterials = {
   model_name: string;
 };
 
-export type DeepTaskResult = ChatAnswer | ResearchMaterials;
+export type DeepTaskResult = ChatAnswer | ResearchMaterials | ChangeBrief;
 
 export type DeepTask = {
   id: string;
@@ -622,6 +830,29 @@ export const api = {
   getGraph: (snapshotId: string) => request<GraphData>(`/snapshots/${snapshotId}/graph`),
   getStartHere: (snapshotId: string) =>
     request<StartHere>(`/snapshots/${snapshotId}/start-here`),
+  getProjectMap: (snapshotId: string) =>
+    request<ProjectMap>(`/snapshots/${snapshotId}/project-map`),
+  getFeatureFlows: (snapshotId: string) =>
+    request<FeatureFlowCatalog>(`/snapshots/${snapshotId}/feature-flows`),
+  getFeatureFlow: (snapshotId: string, flowId: string) =>
+    request<FeatureFlowDetail>(
+      `/snapshots/${snapshotId}/feature-flows/${encodeURIComponent(flowId)}`,
+    ),
+  createCodeExplanation: (
+    snapshotId: string,
+    selection: CodeSelection,
+    depth: CodeExplanationDepth = "minimum",
+    context?: { featureFlowId?: string | null; flowStepId?: string | null },
+  ) =>
+    request<CodeExplanation>(`/snapshots/${snapshotId}/code-explanations`, {
+      method: "POST",
+      body: JSON.stringify({
+        selection,
+        depth,
+        feature_flow_id: context?.featureFlowId ?? null,
+        flow_step_id: context?.flowStepId ?? null,
+      }),
+    }),
   createLearnerProfile: (anonymousKey: string) =>
     request<LearnerProfile>("/learner-profiles", {
       method: "POST",
@@ -784,6 +1015,19 @@ export const api = {
   ) =>
     request<DeepTask>(
       `/learning-sessions/${encodeURIComponent(learningSessionId)}/deep-tasks`,
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey },
+        body: JSON.stringify(input),
+      },
+    ),
+  createNavigationDeepTask: (
+    chatSessionId: string,
+    input: DeepTaskRequest,
+    idempotencyKey: string,
+  ) =>
+    request<DeepTask>(
+      `/chat/sessions/${encodeURIComponent(chatSessionId)}/deep-tasks`,
       {
         method: "POST",
         headers: { "Idempotency-Key": idempotencyKey },

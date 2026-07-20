@@ -57,13 +57,13 @@ type Props = {
   deepTaskError: string | null;
   deepTaskStarting: boolean;
   deepTaskCancelling: boolean;
+  onOpenEvidence: (citation: Citation) => void;
   onAssessmentAnswer: (itemId: string, answer: string) => void;
   onAssessmentSubmit: () => void;
   onAssessmentSkip: () => void;
   onTeachingStyleChange: (style: TeachingStyle) => void;
   onAsk: (question: string) => Promise<void>;
   onOpenFile: (fileId: string) => void;
-  onOpenEvidence: (citation: Citation) => void;
   onOpenLines: (fileId: string, startLine: number, endLine: number) => void;
   onOpenLesson: (learningModule: LearningModule, lesson: LearningLesson) => void;
   onLearningFeedback: (
@@ -102,13 +102,13 @@ export function AssistantPanel({
   deepTaskError,
   deepTaskStarting,
   deepTaskCancelling,
+  onOpenEvidence,
   onAssessmentAnswer,
   onAssessmentSubmit,
   onAssessmentSkip,
   onTeachingStyleChange,
   onAsk,
   onOpenFile,
-  onOpenEvidence,
   onOpenLines,
   onOpenLesson,
   onLearningFeedback,
@@ -174,6 +174,7 @@ export function AssistantPanel({
             error={deepTaskError}
             isStarting={deepTaskStarting}
             isCancelling={deepTaskCancelling}
+            onOpenEvidence={onOpenEvidence}
             onCancel={onCancelDeepTask}
             onDismiss={onDismissDeepTask}
             task={deepTask}

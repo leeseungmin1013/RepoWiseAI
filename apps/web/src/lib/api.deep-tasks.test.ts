@@ -52,6 +52,37 @@ describe("deep task API client", () => {
     );
   });
 
+  it("posts a navigation Change Brief against the chat session", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ...queuedTask, kind: "impact_analysis" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const input = {
+      kind: "impact_analysis" as const,
+      prompt: "이 선택을 바꾸면 어디가 달라져?",
+      selection: { file_id: "file_1", start_line: 3, end_line: 8 },
+      navigation_context: {
+        feature_key: "login-flow",
+        explanation_depth: "change" as const,
+      },
+      modality: "text" as const,
+    };
+
+    await api.createNavigationDeepTask("chat/session", input, "nav-idem-1");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:8000/api/chat/sessions/chat%2Fsession/deep-tasks",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify(input),
+        headers: expect.objectContaining({ "Idempotency-Key": "nav-idem-1" }),
+      }),
+    );
+  });
+
   it("posts cancellation for an encoded task id", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ ...queuedTask, status: "cancelled" }), {

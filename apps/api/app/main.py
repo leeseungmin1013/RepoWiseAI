@@ -22,7 +22,13 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Location", "X-OpenAI-Realtime-Call-Id"],
+    expose_headers=[
+        "Location",
+        "X-OpenAI-Realtime-Call-Id",
+        "X-Navigation-Artifact-Version",
+        "X-Navigation-Cache",
+        "X-Navigation-Cache-Write",
+    ],
 )
 app.include_router(api_router, prefix=settings.api_prefix)
 

@@ -1,0 +1,713 @@
+.panel {
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  max-width: 1160px;
+  overflow-y: auto;
+  margin: 0 auto;
+  padding: 22px 18px 36px;
+  color: var(--ink, #182229);
+}
+
+.breadcrumbs {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted, #68757d);
+  font-size: 10px;
+  margin-bottom: 13px;
+}
+
+.breadcrumbs button {
+  border: 0;
+  background: transparent;
+  color: var(--teal-dark, #05685f);
+  padding: 3px 0;
+}
+
+.breadcrumbs button:hover {
+  text-decoration: underline;
+}
+
+.breadcrumbs span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.catalogHero,
+.detailHero {
+  border: 1px solid var(--border, #d5dde1);
+  border-radius: 12px;
+  background:
+    linear-gradient(125deg, rgba(8, 127, 115, 0.1), transparent 46%),
+    var(--surface, #fff);
+  padding: 27px;
+}
+
+.catalogHero h1,
+.detailHero h1 {
+  margin: 12px 0 0;
+  font-size: clamp(22px, 3vw, 32px);
+  letter-spacing: -0.035em;
+  line-height: 1.25;
+}
+
+.catalogHero p,
+.detailHero p {
+  max-width: 760px;
+  margin: 10px 0 0;
+  color: var(--muted, #68757d);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.catalogHero small {
+  display: block;
+  color: var(--muted, #68757d);
+  font-size: 9px;
+  margin-top: 14px;
+}
+
+.eyebrow,
+.detailHero,
+.flowCardTopline,
+.flowMetrics,
+.areaTags,
+.confidence,
+.stepTopline,
+.evidenceButton,
+.sectionHeading > div,
+.catalogLimitations,
+.backButton,
+.learningButton,
+.stateActions {
+  display: flex;
+  align-items: center;
+}
+
+.eyebrow {
+  width: fit-content;
+  flex-wrap: wrap;
+  gap: 7px;
+  color: var(--teal-dark, #05685f);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.11em;
+}
+
+.detailHero {
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.detailHero > div {
+  min-width: 0;
+}
+
+.learningButton {
+  min-height: 38px;
+  flex: 0 0 auto;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--border-strong, #b9c5ca);
+  border-radius: 7px;
+  background: var(--surface, #fff);
+  color: var(--ink, #182229);
+  font-size: 11px;
+  font-weight: 750;
+  padding: 0 12px;
+}
+
+.learningButton span {
+  border-radius: 999px;
+  background: var(--surface-muted, #f6f8f9);
+  color: var(--muted, #68757d);
+  font-size: 8px;
+  padding: 2px 5px;
+}
+
+.learningButton:hover {
+  border-color: var(--teal, #087f73);
+  color: var(--teal-dark, #05685f);
+}
+
+.catalogGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.flowCard {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  border: 1px solid var(--border, #d5dde1);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+  box-shadow: var(--shadow, 0 1px 2px rgba(24, 34, 41, 0.06));
+  padding: 18px;
+}
+
+.flowCardTopline {
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.flowCardTopline > span {
+  color: var(--teal-dark, #05685f);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.flowCard h2 {
+  margin: 18px 0 0;
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.flowCard > p {
+  margin: 7px 0 0;
+  color: var(--muted, #68757d);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.flowCard dl {
+  display: grid;
+  gap: 7px;
+  border-top: 1px solid var(--border, #d5dde1);
+  margin: 15px 0 0;
+  padding-top: 12px;
+}
+
+.flowCard dl > div {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 7px;
+}
+
+.flowCard dt,
+.stepFacts dt {
+  color: var(--muted, #68757d);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.flowCard dd,
+.stepFacts dd {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.flowMetrics {
+  gap: 6px;
+  margin-top: 13px;
+}
+
+.flowMetrics span,
+.areaTags span {
+  border-radius: 999px;
+  background: var(--surface-muted, #f6f8f9);
+  color: var(--muted, #68757d);
+  font-size: 9px;
+  padding: 4px 7px;
+}
+
+.areaTags {
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 11px;
+}
+
+.areaTags span {
+  border: 1px solid var(--border, #d5dde1);
+  background: var(--surface, #fff);
+}
+
+.selectFlowButton {
+  display: flex;
+  width: 100%;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--teal-dark, #05685f);
+  border-radius: 7px;
+  background: var(--teal, #087f73);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 750;
+  margin-top: 16px;
+}
+
+.selectFlowButton:hover {
+  background: var(--teal-dark, #05685f);
+}
+
+.evidenceButton {
+  width: 100%;
+  min-width: 0;
+  gap: 7px;
+  border: 0;
+  border-top: 1px solid var(--border, #d5dde1);
+  background: transparent;
+  color: var(--teal-dark, #05685f);
+  margin-top: 11px;
+  padding: 10px 0 0;
+  text-align: left;
+}
+
+.evidenceButton > span {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+}
+
+.evidenceButton code {
+  overflow: hidden;
+  min-width: 0;
+  font-size: 9px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evidenceButton small {
+  flex: 0 0 auto;
+  color: var(--muted, #68757d);
+  font-size: 8px;
+}
+
+.evidenceButton:hover code {
+  text-decoration: underline;
+}
+
+.confidence {
+  width: fit-content;
+  flex: 0 0 auto;
+  gap: 4px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 750;
+  line-height: 18px;
+  padding: 0 7px;
+  white-space: nowrap;
+}
+
+.verified {
+  border-color: #acd5cf;
+  background: var(--teal-soft, #e4f4f1);
+  color: var(--teal-dark, #05685f);
+}
+
+.inferred {
+  border-color: #e3ca9d;
+  background: var(--amber-soft, #fff4dc);
+  color: #85580f;
+}
+
+.unknown {
+  border-color: var(--border, #d5dde1);
+  background: var(--surface-muted, #f6f8f9);
+  color: var(--muted, #68757d);
+}
+
+.flowBoundary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  margin: 18px 3px 0;
+}
+
+.flowBoundary > div {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--border, #d5dde1);
+  border-radius: 8px;
+  background: var(--surface-muted, #f6f8f9);
+  padding: 13px;
+}
+
+.flowBoundary > div > span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--teal-dark, #05685f);
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.flowBoundary strong {
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.flowBoundary > svg {
+  color: var(--teal, #087f73);
+}
+
+.stepsSection {
+  border-top: 1px solid var(--border, #d5dde1);
+  margin-top: 30px;
+  padding: 27px 4px 0;
+}
+
+.failureSection {
+  border-top-color: #e3ca9d;
+}
+
+.sectionHeading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.sectionHeading > div {
+  gap: 9px;
+}
+
+.sectionHeading span {
+  border-top: 2px solid var(--teal, #087f73);
+  color: var(--teal-dark, #05685f);
+  font-size: 9px;
+  font-weight: 800;
+  padding-top: 4px;
+}
+
+.failureSection .sectionHeading span {
+  border-top-color: #b27616;
+  color: #85580f;
+}
+
+.sectionHeading h2,
+.limitations h2,
+.catalogLimitations h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.sectionHeading p {
+  margin: 2px 0 0;
+  color: var(--muted, #68757d);
+  font-size: 10px;
+}
+
+.stepList {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stepItem {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+}
+
+.stepNumber {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--teal-soft, #e4f4f1);
+  color: var(--teal-dark, #05685f);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.failureNumber {
+  background: var(--amber-soft, #fff4dc);
+  color: #85580f;
+}
+
+.stepCard {
+  min-width: 0;
+  border: 1px solid var(--border, #d5dde1);
+  border-radius: 9px;
+  background: var(--surface, #fff);
+  padding: 16px;
+}
+
+.stepTopline {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.stepTopline .confidence {
+  margin-left: auto;
+}
+
+.stepRole,
+.relation {
+  border-radius: 4px;
+  background: var(--surface-muted, #f6f8f9);
+  color: var(--muted, #68757d);
+  font-size: 9px;
+  font-weight: 700;
+  padding: 4px 6px;
+}
+
+.relation {
+  color: var(--teal-dark, #05685f);
+}
+
+.stepCard h3 {
+  margin: 13px 0 0;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.stepFacts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 13px 0 0;
+}
+
+.stepFacts > div {
+  border-left: 2px solid var(--border, #d5dde1);
+  padding-left: 9px;
+}
+
+.stepFacts dd {
+  margin-top: 5px;
+}
+
+.evidenceList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 12px;
+  margin-top: 5px;
+}
+
+.unknownEvidence {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #85580f;
+  font-size: 10px;
+  margin: 13px 0 0;
+}
+
+.limitations,
+.catalogLimitations {
+  border: 1px solid #e3ca9d;
+  border-radius: 9px;
+  background: var(--amber-soft, #fff4dc);
+  margin-top: 27px;
+  padding: 16px;
+}
+
+.limitations > div,
+.catalogLimitations {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.limitations svg,
+.catalogLimitations > svg {
+  flex: 0 0 auto;
+  color: #a06a12;
+  margin-top: 1px;
+}
+
+.limitations p,
+.limitations li,
+.catalogLimitations p,
+.catalogLimitations li {
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.limitations > p,
+.limitations ul {
+  margin: 10px 0 0 25px;
+}
+
+.limitations ul,
+.catalogLimitations ul {
+  display: grid;
+  gap: 5px;
+  padding-left: 17px;
+}
+
+.catalogLimitations h2 {
+  font-size: 13px;
+}
+
+.catalogLimitations p,
+.catalogLimitations ul {
+  margin: 6px 0 0;
+}
+
+.unknownNotice {
+  color: #85580f;
+}
+
+.backButton {
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--teal-dark, #05685f);
+  font-size: 10px;
+  margin: 16px auto 0;
+}
+
+.inlineEmpty {
+  color: var(--muted, #68757d);
+  font-size: 11px;
+}
+
+.statePanel {
+  display: flex;
+  width: min(580px, calc(100% - 32px));
+  min-height: 170px;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  border: 1px solid var(--border, #d5dde1);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+  margin: 34px auto;
+  padding: 24px;
+}
+
+.statePanel > span {
+  display: grid;
+  width: 43px;
+  height: 43px;
+  flex: 0 0 43px;
+  place-items: center;
+  border-radius: 9px;
+  background: var(--teal-soft, #e4f4f1);
+  color: var(--teal-dark, #05685f);
+}
+
+.statePanel strong {
+  font-size: 14px;
+}
+
+.statePanel p {
+  margin: 6px 0 0;
+  color: var(--muted, #68757d);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.stateLimitations {
+  display: grid;
+  gap: 4px;
+  margin: 9px 0 0;
+  padding-left: 17px;
+}
+
+.stateLimitations li {
+  color: #85580f;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.stateActions {
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.stateActions button {
+  display: inline-flex;
+  min-height: 33px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border-strong, #b9c5ca);
+  border-radius: 6px;
+  background: var(--surface, #fff);
+  color: var(--ink, #182229);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 0 10px;
+}
+
+.spinning svg {
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 760px) {
+  .catalogGrid,
+  .stepFacts,
+  .evidenceList {
+    grid-template-columns: 1fr;
+  }
+
+  .detailHero {
+    flex-direction: column;
+  }
+
+  .learningButton {
+    width: 100%;
+  }
+
+  .flowBoundary {
+    grid-template-columns: 1fr;
+  }
+
+  .flowBoundary > svg {
+    margin: 0 auto;
+    transform: rotate(90deg);
+  }
+
+  .sectionHeading {
+    display: grid;
+  }
+}
+
+@media (max-width: 520px) {
+  .catalogHero,
+  .detailHero {
+    border-radius: 8px;
+    padding: 20px;
+  }
+
+  .stepItem {
+    grid-template-columns: 28px minmax(0, 1fr);
+    gap: 7px;
+  }
+
+  .stepNumber {
+    width: 28px;
+    height: 28px;
+  }
+
+  .stepTopline .confidence {
+    margin-left: 0;
+  }
+
+  .statePanel {
+    align-items: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinning svg { animation: none; }
+}

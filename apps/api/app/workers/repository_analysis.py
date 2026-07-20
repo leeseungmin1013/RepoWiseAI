@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import json
 import shutil
 import tarfile
+from collections import defaultdict
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
+from urllib.parse import urlsplit
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import selectinload
 
 from app.ai.embeddings import build_embedder
 from app.analysis.chunking import SymbolSpan, build_file_chunks
-from app.analysis.typescript import ParseResult, TypeScriptAnalyzer
+from app.analysis.typescript import ParsedEdge, ParseResult, TypeScriptAnalyzer
 from app.core.config import get_settings
 from app.core.db import SessionLocal
 from app.core.ids import new_id
@@ -20,10 +24,12 @@ from app.models import (
     CodeChunk,
     FileRecord,
     GuidedPath,
+    NavigationArtifact,
     RepositorySnapshot,
     Symbol,
     SymbolEdge,
 )
+from app.navigation.versions import SEMANTIC_GRAPH_VERSION
 from app.services.file_filter import collect_source_files
 from app.services.github import GitHubClient
 
@@ -138,6 +144,294 @@ def _resolve_import(source_path: str, target: str, known_paths: set[str]) -> str
     return target
 
 
+@dataclass(frozen=True)
+class _RouteHandler:
+    package_root: str
+    request_path: str
+    http_method: str
+    file_path: str
+    target_symbol_id: str
+
+
+@dataclass(frozen=True)
+class _ResolvedEdge:
+    relation: str
+    source_qualified_name: str | None
+    target_symbol_id: str | None
+    target_path: str | None
+    confidence: float
+    start_line: int
+    end_line: int
+    metadata: dict[str, object]
+
+
+def _next_route_request_path(file_path: str) -> str | None:
+    parts = PurePosixPath(file_path).parts
+    if not parts or parts[-1].lower() not in {
+        "route.ts",
+        "route.tsx",
+        "route.js",
+        "route.jsx",
+    }:
+        return None
+
+    app_index = next(
+        (
+            index
+            for index in range(len(parts) - 2)
+            if parts[index] == "app" and parts[index + 1] == "api"
+        ),
+        None,
+    )
+    if app_index is None:
+        return None
+
+    url_segments: list[str] = []
+    for segment in parts[app_index + 1 : -1]:
+        if (
+            "[" in segment
+            or "]" in segment
+            or segment.startswith("@")
+            or segment.startswith("_")
+        ):
+            return None
+        if segment.startswith("(") and segment.endswith(")"):
+            continue
+        url_segments.append(segment)
+    if not url_segments or url_segments[0] != "api":
+        return None
+    return f"/{'/'.join(url_segments)}"
+
+
+def _normalize_literal_request_path(request_target: str) -> str | None:
+    try:
+        parsed = urlsplit(request_target)
+    except ValueError:
+        return None
+    if parsed.scheme or parsed.netloc or not parsed.path.startswith("/"):
+        return None
+    path = parsed.path
+    if len(path) > 1:
+        path = path.rstrip("/")
+    return path
+
+
+def _find_next_package_roots(file_contents: dict[str, str]) -> set[str]:
+    roots: set[str] = set()
+    for path, content in file_contents.items():
+        if PurePosixPath(path).name != "package.json":
+            continue
+        try:
+            manifest = json.loads(content)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(manifest, dict):
+            continue
+        dependency_names: set[str] = set()
+        for field in (
+            "dependencies",
+            "devDependencies",
+            "optionalDependencies",
+            "peerDependencies",
+        ):
+            dependencies = manifest.get(field)
+            if isinstance(dependencies, dict):
+                dependency_names.update(str(name) for name in dependencies)
+        if "next" not in dependency_names:
+            continue
+        parent = PurePosixPath(path).parent.as_posix()
+        roots.add("" if parent == "." else parent)
+    return roots
+
+
+def _path_is_under_root(path: str, root: str) -> bool:
+    return not root or path == root or path.startswith(f"{root}/")
+
+
+def _longest_matching_package_root(path: str, roots: set[str]) -> str | None:
+    matching = [root for root in roots if _path_is_under_root(path, root)]
+    if not matching:
+        return None
+    return max(
+        matching,
+        key=lambda root: (len(PurePosixPath(root).parts), len(root)),
+    )
+
+
+def _build_route_handler_index(
+    parse_results: dict[str, ParseResult],
+    symbol_ids: dict[str, str],
+    next_package_roots: set[str],
+) -> dict[tuple[str, str, str], _RouteHandler]:
+    candidates: dict[tuple[str, str, str], list[_RouteHandler]] = defaultdict(list)
+    for file_path, result in parse_results.items():
+        package_root = _longest_matching_package_root(file_path, next_package_roots)
+        if package_root is None:
+            continue
+        request_path = _next_route_request_path(file_path)
+        if request_path is None:
+            continue
+        for symbol in result.symbols:
+            exported_methods = {
+                name.upper()
+                for name in symbol.exported_names
+                if name.upper()
+                in {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}
+            }
+            if symbol.kind != "route" or not exported_methods:
+                continue
+            target_symbol_id = symbol_ids.get(symbol.qualified_name)
+            if target_symbol_id:
+                for http_method in sorted(exported_methods):
+                    candidates[(package_root, request_path, http_method)].append(
+                        _RouteHandler(
+                            package_root=package_root,
+                            request_path=request_path,
+                            http_method=http_method,
+                            file_path=file_path,
+                            target_symbol_id=target_symbol_id,
+                        )
+                    )
+
+    return {
+        key: handlers[0]
+        for key, handlers in candidates.items()
+        if len(handlers) == 1
+    }
+
+
+def _resolve_local_symbol_id(
+    file_path: str,
+    source_qualified_name: str | None,
+    target: str,
+    symbol_ids: dict[str, str],
+) -> str | None:
+    candidates: list[str] = []
+    if source_qualified_name and source_qualified_name.startswith(f"{file_path}::"):
+        current = source_qualified_name
+        while True:
+            candidates.append(f"{current}.{target}")
+            local_name = current.split("::", 1)[1]
+            if "." not in local_name:
+                break
+            current = f"{file_path}::{local_name.rsplit('.', 1)[0]}"
+    candidates.append(f"{file_path}::{target}")
+    for candidate in candidates:
+        target_symbol_id = symbol_ids.get(candidate)
+        if target_symbol_id:
+            return target_symbol_id
+    return None
+
+
+def _resolve_parsed_edge(
+    *,
+    file_path: str,
+    parsed_edge: ParsedEdge,
+    known_paths: set[str],
+    symbol_ids: dict[str, str],
+    display_symbol_ids: dict[tuple[str, str], str],
+    route_handlers: dict[tuple[str, str, str], _RouteHandler],
+    next_package_roots: set[str],
+) -> list[_ResolvedEdge]:
+    target_path = parsed_edge.target
+    target_symbol_id = None
+    metadata: dict[str, object] = dict(parsed_edge.metadata)
+
+    if parsed_edge.relation == "IMPORTS":
+        target_path = _resolve_import(file_path, target_path, known_paths)
+        metadata["resolved_path"] = target_path
+        metadata["resolution"] = (
+            "local_file" if target_path in known_paths else "module_specifier"
+        )
+    elif parsed_edge.relation == "CALLS":
+        short_target = target_path.rsplit(".", 1)[-1]
+        target_symbol_id = display_symbol_ids.get((file_path, short_target))
+        metadata["resolution"] = (
+            "same_file_symbol" if target_symbol_id else "syntactic_target_only"
+        )
+    elif parsed_edge.relation == "TRIGGERS":
+        target_symbol_id = _resolve_local_symbol_id(
+            file_path,
+            parsed_edge.source_qualified_name,
+            parsed_edge.target,
+            symbol_ids,
+        )
+        metadata["resolution"] = (
+            "local_symbol" if target_symbol_id else "unresolved_identifier"
+        )
+    elif parsed_edge.relation == "REQUESTS":
+        metadata_request_path = str(metadata.get("request_path") or "")
+        request_path = (
+            _normalize_literal_request_path(metadata_request_path)
+            if metadata.get("target_scope") == "local"
+            else None
+        )
+        http_method = str(metadata.get("http_method", "GET")).upper()
+        source_package_root = _longest_matching_package_root(
+            file_path, next_package_roots
+        )
+        route_handler = (
+            route_handlers.get((source_package_root, request_path, http_method))
+            if source_package_root is not None and request_path
+            else None
+        )
+        metadata["resolution"] = (
+            "exact_next_app_route" if route_handler else "literal_only"
+        )
+        request_edge = _ResolvedEdge(
+            relation=parsed_edge.relation,
+            source_qualified_name=parsed_edge.source_qualified_name,
+            target_symbol_id=None,
+            target_path=target_path,
+            confidence=parsed_edge.confidence,
+            start_line=parsed_edge.start_line,
+            end_line=parsed_edge.end_line,
+            metadata=metadata,
+        )
+        if route_handler is None:
+            return [request_edge]
+        handled_by_metadata: dict[str, object] = {
+            "client": metadata.get("client"),
+            "http_method": http_method,
+            "request_path": request_path,
+            "route_file_path": route_handler.file_path,
+            "package_root": route_handler.package_root,
+            "resolution": "exact_next_app_route",
+            "derived_from_relation": "REQUESTS",
+            "confidence_rationale": (
+                "Literal request path and HTTP method exactly match one static Next.js "
+                "App Router route handler."
+            ),
+            "extractor": "repository_semantic_resolver",
+        }
+        return [
+            request_edge,
+            _ResolvedEdge(
+                relation="HANDLED_BY",
+                source_qualified_name=parsed_edge.source_qualified_name,
+                target_symbol_id=route_handler.target_symbol_id,
+                target_path=route_handler.file_path,
+                confidence=1.0,
+                start_line=parsed_edge.start_line,
+                end_line=parsed_edge.end_line,
+                metadata=handled_by_metadata,
+            ),
+        ]
+
+    return [
+        _ResolvedEdge(
+            relation=parsed_edge.relation,
+            source_qualified_name=parsed_edge.source_qualified_name,
+            target_symbol_id=target_symbol_id,
+            target_path=target_path,
+            confidence=parsed_edge.confidence,
+            start_line=parsed_edge.start_line,
+            end_line=parsed_edge.end_line,
+            metadata=metadata,
+        )
+    ]
+
+
 def analyze_repository(snapshot_id: str) -> None:
     settings = get_settings()
     try:
@@ -181,6 +475,11 @@ def analyze_repository(snapshot_id: str) -> None:
         parse_results: dict[str, ParseResult] = {}
 
         with SessionLocal() as db:
+            db.execute(
+                delete(NavigationArtifact).where(
+                    NavigationArtifact.snapshot_id == snapshot_id
+                )
+            )
             db.execute(delete(GuidedPath).where(GuidedPath.snapshot_id == snapshot_id))
             db.execute(delete(CodeChunk).where(CodeChunk.snapshot_id == snapshot_id))
             db.execute(delete(SymbolEdge).where(SymbolEdge.snapshot_id == snapshot_id))
@@ -252,34 +551,47 @@ def analyze_repository(snapshot_id: str) -> None:
                     symbols_by_file.setdefault(path, []).append(symbol)
 
             known_paths = set(file_records)
+            next_package_roots = _find_next_package_roots(
+                {path: record.content for path, record in file_records.items()}
+            )
+            route_handlers = _build_route_handler_index(
+                parse_results, symbol_ids, next_package_roots
+            )
             edge_count = 0
             for path, result in parse_results.items():
                 file_record = file_records[path]
                 for parsed_edge in result.edges:
-                    target = parsed_edge.target
-                    target_symbol_id = None
-                    if parsed_edge.relation == "IMPORTS":
-                        target = _resolve_import(path, target, known_paths)
-                    elif parsed_edge.relation == "CALLS":
-                        short_target = target.rsplit(".", 1)[-1]
-                        target_symbol_id = display_symbol_ids.get((path, short_target))
-                    db.add(
-                        SymbolEdge(
-                            snapshot_id=snapshot_id,
-                            source_file_id=file_record.id,
-                            source_symbol_id=symbol_ids.get(
-                                parsed_edge.source_qualified_name or ""
-                            ),
-                            target_symbol_id=target_symbol_id,
-                            target_path=target,
-                            relation=parsed_edge.relation,
-                            confidence=parsed_edge.confidence,
-                            analysis_method="tree_sitter_v1",
-                            source_start_line=parsed_edge.start_line,
-                            source_end_line=parsed_edge.end_line,
-                        )
+                    resolved_edges = _resolve_parsed_edge(
+                        file_path=path,
+                        parsed_edge=parsed_edge,
+                        known_paths=known_paths,
+                        symbol_ids=symbol_ids,
+                        display_symbol_ids=display_symbol_ids,
+                        route_handlers=route_handlers,
+                        next_package_roots=next_package_roots,
                     )
-                    edge_count += 1
+                    for resolved_edge in resolved_edges:
+                        db.add(
+                            SymbolEdge(
+                                snapshot_id=snapshot_id,
+                                source_file_id=file_record.id,
+                                source_symbol_id=symbol_ids.get(
+                                    resolved_edge.source_qualified_name or ""
+                                ),
+                                target_symbol_id=resolved_edge.target_symbol_id,
+                                target_path=resolved_edge.target_path,
+                                relation=resolved_edge.relation,
+                                confidence=resolved_edge.confidence,
+                                analysis_method=SEMANTIC_GRAPH_VERSION,
+                                source_start_line=resolved_edge.start_line,
+                                source_end_line=resolved_edge.end_line,
+                                metadata_json={
+                                    **resolved_edge.metadata,
+                                    "semantic_graph_version": SEMANTIC_GRAPH_VERSION,
+                                },
+                            )
+                        )
+                        edge_count += 1
 
             job = db.scalar(
                 select(AnalysisJob)
@@ -382,6 +694,7 @@ def analyze_repository(snapshot_id: str) -> None:
             snapshot.edge_count = edge_count
             snapshot.chunk_count = len(chunk_inputs)
             snapshot.total_bytes = sum(file.byte_size for file in source_files)
+            snapshot.parser_version = SEMANTIC_GRAPH_VERSION
             snapshot.index_version = "retrieval-v1"
             snapshot.embedding_model = embedder.model_name
             snapshot.error_message = None

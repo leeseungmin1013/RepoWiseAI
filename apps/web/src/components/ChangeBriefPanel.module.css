@@ -1,0 +1,42 @@
+.scroll { height: 100%; overflow-y: auto; padding: 18px; }
+.requestCard, .hero, .section, .details { border-bottom: 1px solid var(--border); padding-bottom: 18px; }
+.requestCard h2, .hero h2 { color: var(--ink); font-size: 18px; line-height: 1.45; margin: 6px 0 9px; }
+.requestCard > p, .hero > p, .section p { color: var(--muted); font-size: 13px; line-height: 1.6; }
+.kicker { color: var(--teal); font-size: 11px; font-weight: 750; letter-spacing: .05em; }
+.notice, .error { align-items: flex-start; border: 1px solid var(--border); border-radius: 8px; display: flex; font-size: 12px; gap: 8px; line-height: 1.5; margin: 14px 0; padding: 10px; }
+.notice { background: var(--surface-muted); color: var(--muted); }
+.error { background: var(--coral-soft); border-color: #efb4a9; color: #8b3528; }
+.requestCard form { display: grid; gap: 8px; margin-top: 16px; }
+.requestCard label { color: var(--ink); font-size: 12px; font-weight: 700; }
+.requestCard textarea { background: var(--surface); border: 1px solid var(--border-strong); border-radius: 8px; color: var(--ink); font: inherit; line-height: 1.5; padding: 10px; resize: vertical; }
+.requestCard textarea:focus { border-color: var(--teal); outline: 3px solid color-mix(in srgb, var(--teal) 12%, transparent); }
+.requestCard form button, .cancel, .reset { align-items: center; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; display: inline-flex; font-size: 12px; font-weight: 700; gap: 6px; justify-content: center; padding: 9px 10px; }
+.requestCard form button { background: var(--teal); border-color: var(--teal); color: white; }
+.requestCard form button:disabled { cursor: not-allowed; opacity: .5; }
+.cancel, .reset { background: var(--surface-muted); color: var(--muted); margin-top: 10px; }
+.spin { animation: spin .9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.risk { border: 1px solid var(--border); border-radius: 9px; display: grid; gap: 4px; grid-template-columns: auto 1fr; margin-top: 14px; padding: 10px; }
+.risk p { color: var(--muted); font-size: 12px; grid-column: 1 / -1; line-height: 1.5; margin: 0; }
+.low { background: color-mix(in srgb, #34d399 8%, transparent); }
+.medium { background: color-mix(in srgb, #fbbf24 10%, transparent); }
+.high, .unknown { background: color-mix(in srgb, #fb7185 9%, transparent); }
+.section { padding-top: 18px; }
+.section h3, .details h3 { color: var(--ink); font-size: 13px; margin: 0 0 10px; }
+.section > ul, .section > ol, .details ul, .details ol { color: var(--muted); font-size: 12px; line-height: 1.55; margin: 0; padding-left: 18px; }
+.section li, .details li { margin-bottom: 7px; }
+.candidates, .impactList { list-style: none; padding: 0 !important; }
+.candidates button { align-items: center; background: transparent; border: 0; border-bottom: 1px solid var(--border); color: var(--ink); cursor: pointer; display: flex; gap: 9px; padding: 10px 0; text-align: left; width: 100%; }
+.candidates button > span { align-items: center; background: var(--teal-soft); border-radius: 50%; color: var(--teal-dark); display: flex; flex: 0 0 24px; height: 24px; justify-content: center; }
+.candidates button div { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.candidates small, .candidates code { color: var(--muted); font-size: 11px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.impactList li { border: 1px solid var(--border); border-radius: 9px; margin-bottom: 9px; padding: 10px; }
+.impactHeading { align-items: center; display: flex; gap: 6px; }
+.impactHeading strong { color: var(--ink); font-size: 12px; }
+.impactHeading span { color: var(--muted); font-size: 10px; margin-left: auto; }
+.impactList p { margin: 8px 0; }
+.impactList button { align-items: center; background: transparent; border: 0; color: var(--teal); cursor: pointer; display: flex; font-size: 11px; gap: 5px; max-width: 100%; padding: 0; }
+.empty { font-style: italic; }
+.details { color: var(--muted); font-size: 12px; padding-top: 18px; }
+.details summary { color: var(--ink); cursor: pointer; font-weight: 700; }
+.details h3 { margin-top: 14px; }

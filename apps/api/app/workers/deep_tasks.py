@@ -7,6 +7,7 @@ from sqlalchemy import select
 from app.core.config import Settings, get_settings
 from app.core.db import SessionLocal
 from app.models import DeepTask
+from app.navigation.change_brief import generate_change_brief
 from app.services.grounded_chat import GroundedGenerationCancelled, create_grounded_message
 from app.services.research_materials import research_official_materials
 
@@ -52,6 +53,28 @@ def run_deep_task(task_id: str) -> None:
                 "modality": task.modality,
             }
             db.commit()
+
+            if getattr(task, "context_json", {}).get("scope") == "navigation":
+                task.status = "reasoning"
+                task.progress = 55
+                task.message = "직접 영향과 확인할 경계를 구분하고 있습니다."
+                db.commit()
+                brief = generate_change_brief(db, task)
+                if task.status == "cancelled":
+                    return
+                task.status = "completed"
+                task.progress = 100
+                task.message = "변경 영향 브리프가 준비되었습니다."
+                task.result_payload = brief.model_dump(mode="json")
+                task.model_metadata = {
+                    **task.model_metadata,
+                    "model": None,
+                    "prompt_version": brief.analysis_version,
+                    "generation_mode": "deterministic_semantic_graph",
+                }
+                task.finished_at = _utc_now()
+                db.commit()
+                return
 
             if task.kind == "research_materials":
                 research = research_official_materials(

@@ -3,7 +3,18 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Boolean, Computed, DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import (
+    Boolean,
+    Computed,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -68,6 +79,9 @@ class RepositorySnapshot(Base):
         back_populates="snapshot", cascade="all, delete-orphan"
     )
     edges: Mapped[list[SymbolEdge]] = relationship(
+        back_populates="snapshot", cascade="all, delete-orphan"
+    )
+    navigation_artifacts: Mapped[list[NavigationArtifact]] = relationship(
         back_populates="snapshot", cascade="all, delete-orphan"
     )
     chunks: Mapped[list[CodeChunk]] = relationship(
@@ -180,8 +194,56 @@ class SymbolEdge(Base):
     analysis_method: Mapped[str] = mapped_column(String(80), default="tree_sitter")
     source_start_line: Mapped[int | None] = mapped_column(Integer, nullable=True)
     source_end_line: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    metadata_json: Mapped[dict] = mapped_column(
+        JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
 
     snapshot: Mapped[RepositorySnapshot] = relationship(back_populates="edges")
+
+
+class NavigationArtifact(Base):
+    __tablename__ = "navigation_artifacts"
+    __table_args__ = (
+        Index(
+            "uq_navigation_artifact_snapshot_type_key_version",
+            "snapshot_id",
+            "artifact_type",
+            "artifact_key",
+            "artifact_version",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(48), primary_key=True, default=lambda: new_id("navart")
+    )
+    snapshot_id: Mapped[str] = mapped_column(
+        ForeignKey("repository_snapshots.id", ondelete="CASCADE"), index=True
+    )
+    artifact_type: Mapped[str] = mapped_column(String(60), index=True)
+    artifact_key: Mapped[str] = mapped_column(String(500))
+    artifact_version: Mapped[str] = mapped_column(String(60), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="ready", index=True)
+    payload_json: Mapped[dict] = mapped_column(
+        JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
+    evidence_ids: Mapped[list[str]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
+    )
+    confidence_summary: Mapped[dict] = mapped_column(
+        JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
+    generation_metadata: Mapped[dict] = mapped_column(
+        JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+    snapshot: Mapped[RepositorySnapshot] = relationship(
+        back_populates="navigation_artifacts"
+    )
 
 
 class CodeChunk(Base):
@@ -812,6 +874,9 @@ class ChatSession(Base):
     preferred_style: Mapped[str] = mapped_column(String(40), default="beginner")
     teaching_state: Mapped[dict] = mapped_column(JSONB, default=dict)
     current_selection: Mapped[dict] = mapped_column(JSONB, default=dict)
+    navigation_context: Mapped[dict] = mapped_column(
+        JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
     learning_session_id: Mapped[str | None] = mapped_column(
         ForeignKey("learning_sessions.id", ondelete="SET NULL"), nullable=True, index=True
     )
@@ -857,11 +922,17 @@ class DeepTask(Base):
             "idempotency_key",
             unique=True,
         ),
+        Index(
+            "uq_deep_task_chat_idempotency",
+            "chat_session_id",
+            "idempotency_key",
+            unique=True,
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("dtask"))
-    learning_session_id: Mapped[str] = mapped_column(
-        ForeignKey("learning_sessions.id", ondelete="CASCADE"), index=True
+    learning_session_id: Mapped[str | None] = mapped_column(
+        ForeignKey("learning_sessions.id", ondelete="SET NULL"), nullable=True, index=True
     )
     chat_session_id: Mapped[str] = mapped_column(
         ForeignKey("chat_sessions.id", ondelete="CASCADE"), index=True
@@ -871,6 +942,9 @@ class DeepTask(Base):
     idempotency_key: Mapped[str] = mapped_column(String(200))
     prompt: Mapped[str] = mapped_column(Text)
     selection: Mapped[dict] = mapped_column(JSONB, default=dict)
+    context_json: Mapped[dict] = mapped_column(
+        JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
     teaching_style: Mapped[str] = mapped_column(String(40))
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
     progress: Mapped[int] = mapped_column(Integer, default=0)

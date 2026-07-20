@@ -11,7 +11,11 @@ from app import queue
 from app.api import deep_tasks
 from app.core.config import Settings
 from app.core.db import get_db
-from app.schemas import ChatAnswerResponse, DeepTaskCreate
+from app.schemas import (
+    ChangeBriefResponse,
+    ChatAnswerResponse,
+    DeepTaskCreate,
+)
 from app.workers import deep_tasks as deep_task_worker
 
 NOW = datetime(2026, 7, 13, tzinfo=UTC)
@@ -27,6 +31,7 @@ def _task(**overrides):
         "idempotency_key": "request-1",
         "prompt": "인증 흐름을 깊게 설명해줘",
         "selection": {},
+        "context_json": {},
         "teaching_style": "beginner",
         "status": "queued",
         "progress": 0,
@@ -218,6 +223,131 @@ def test_research_materials_is_accepted_by_the_verified_queue(
     assert db.added.kind == "research_materials"
 
 
+class NavigationCreateDb:
+    def __init__(self, chat_session, scalar_results: list[object]) -> None:
+        self.chat_session = chat_session
+        self.scalar_results = iter(scalar_results)
+        self.added = None
+        self.commits = 0
+
+    def get(self, model, identifier):
+        if model is deep_tasks.ChatSession and identifier == self.chat_session.id:
+            return self.chat_session
+        return None
+
+    def scalar(self, _statement):
+        return next(self.scalar_results)
+
+    def add(self, task) -> None:
+        self.added = task
+        task.id = "dtask_navigation"
+        task.rq_job_id = None
+        task.result_payload = None
+        task.error_code = None
+        task.error_detail = None
+        task.model_metadata = {}
+
+    def commit(self) -> None:
+        self.commits += 1
+
+    def rollback(self) -> None:
+        pass
+
+    def refresh(self, _task) -> None:
+        pass
+
+
+def test_navigation_deep_task_snapshots_safe_context_without_learning_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chat = SimpleNamespace(
+        id="ses_nav",
+        snapshot_id="snap_1",
+        current_selection={},
+        navigation_context={},
+        preferred_style="beginner",
+    )
+    file = SimpleNamespace(id="file_1", line_count=40)
+    db = NavigationCreateDb(chat, [None, file])
+    monkeypatch.setattr(deep_tasks, "enqueue_deep_task", lambda _task_id: "rq_nav")
+
+    response = deep_tasks.create_navigation_deep_task(
+        chat.id,
+        DeepTaskCreate(
+            kind="impact_analysis",
+            prompt="로그인 결과를 바꾸면 어디가 달라질까?",
+            selection={"file_id": "file_1", "start_line": 4, "end_line": 9},
+            navigation_context={
+                "feature_key": "login-flow",
+                "flow_step_id": "step-submit",
+                "explanation_depth": "change",
+            },
+        ),
+        db,
+        "nav-request-1",
+    )
+
+    assert response.status == "queued"
+    assert db.added.learning_session_id is None
+    assert db.added.chat_session_id == chat.id
+    assert db.added.context_json == {
+        "scope": "navigation",
+        "navigation_context": {
+            "feature_key": "login-flow",
+            "flow_step_id": "step-submit",
+            "explanation_depth": "change",
+            "selection": {"file_id": "file_1", "start_line": 4, "end_line": 9},
+        },
+    }
+    assert chat.navigation_context == db.added.context_json["navigation_context"]
+    assert db.added.rq_job_id == "rq_nav"
+
+
+def test_navigation_deep_task_rejects_non_impact_kind() -> None:
+    chat = SimpleNamespace(id="ses_nav")
+    db = NavigationCreateDb(chat, [])
+
+    with pytest.raises(HTTPException) as error:
+        deep_tasks.create_navigation_deep_task(
+            chat.id,
+            DeepTaskCreate(kind="deep_explanation", prompt="자세히 설명해줘"),
+            db,
+            "nav-request-1",
+        )
+
+    assert error.value.status_code == 422
+
+
+def test_navigation_deep_task_returns_idempotent_chat_task_without_enqueue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chat = SimpleNamespace(id="ses_nav")
+    existing = _task(
+        learning_session_id=None,
+        chat_session_id=chat.id,
+        status="running",
+        progress=55,
+        context_json={"scope": "navigation"},
+    )
+    db = NavigationCreateDb(chat, [existing])
+    monkeypatch.setattr(
+        deep_tasks,
+        "enqueue_deep_task",
+        lambda _task_id: pytest.fail("idempotent navigation task must not enqueue again"),
+    )
+
+    response = deep_tasks.create_navigation_deep_task(
+        chat.id,
+        DeepTaskCreate(kind="impact_analysis", prompt="영향을 분석해줘"),
+        db,
+        "nav-request-1",
+    )
+
+    assert response.id == existing.id
+    assert response.status == "running"
+    assert db.added is None
+
+
 def test_idempotent_retry_recovers_queued_task_missing_rq_job_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -395,6 +525,70 @@ def test_worker_uses_escalation_model_and_persists_compatible_result(
     assert task.result_payload == response.model_dump(mode="json")
     assert task.model_metadata["model"] == "sol-test"
     assert db.commits == 2
+
+
+def test_worker_persists_structured_navigation_change_brief(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task = _task(
+        kind="impact_analysis",
+        learning_session_id=None,
+        context_json={"scope": "navigation", "navigation_context": {}},
+    )
+    db = WorkerDb(task)
+    brief = ChangeBriefResponse(
+        id="change_1",
+        snapshot_id="snap_1",
+        analysis_version="change-brief-v1",
+        request_summary=task.prompt,
+        selection={"file_id": "file_1", "start_line": 1, "end_line": 5},
+        candidate_locations=[
+            {
+                "title": "login",
+                "reason": "선택 위치",
+                "confidence": "verified",
+                "evidence": {
+                    "file_id": "file_1",
+                    "path": "src/auth.ts",
+                    "start_line": 1,
+                    "end_line": 5,
+                    "reason": "선택 근거",
+                },
+            }
+        ],
+        confirmed_direct_impacts=[],
+        possible_impacts_to_verify=[],
+        unknown_boundaries=["런타임 호출"],
+        risk_level="unknown",
+        risk_rationale="근거 부족",
+        verification_steps=["테스트 실행"],
+        rollback_guidance=["커밋 되돌리기"],
+        evidence=[
+            {
+                "file_id": "file_1",
+                "path": "src/auth.ts",
+                "start_line": 1,
+                "end_line": 5,
+                "reason": "선택 근거",
+            }
+        ],
+        limitations=["정적 분석"],
+    )
+    monkeypatch.setattr(deep_task_worker, "SessionLocal", lambda: db)
+    monkeypatch.setattr(deep_task_worker, "get_settings", Settings)
+    monkeypatch.setattr(deep_task_worker, "generate_change_brief", lambda *_args: brief)
+    monkeypatch.setattr(
+        deep_task_worker,
+        "create_grounded_message",
+        lambda *_args, **_kwargs: pytest.fail("navigation task must not use free-form generation"),
+    )
+
+    deep_task_worker.run_deep_task(task.id)
+
+    assert task.status == "completed"
+    assert task.result_payload == brief.model_dump(mode="json")
+    assert task.model_metadata["generation_mode"] == "deterministic_semantic_graph"
+    assert task.result_message_id is None
 
 
 def test_worker_persists_provider_failure_instead_of_false_success(

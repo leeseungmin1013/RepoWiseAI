@@ -11,6 +11,7 @@ import {
   LoaderCircle,
   PanelRight,
   Play,
+  ShieldAlert,
   TriangleAlert,
   Waypoints,
 } from "lucide-react";
@@ -22,9 +23,14 @@ import {
   type AssessmentSession,
   type ChatAnswer,
   type Citation,
+  type CodeExplanation,
+  type CodeExplanationDepth,
   type CodeSelection,
   type DeepTask,
   type DeepTaskRequest,
+  type FeatureFlowCatalog,
+  type FeatureFlowDetail,
+  type FeatureFlowEvidence,
   type GraphData,
   type Health,
   type LearnerProfile,
@@ -35,6 +41,8 @@ import {
   type LearningPath,
   type LearningSession,
   type MasteryOverview,
+  type ProjectMap,
+  type ProjectMapEvidence,
   type RemediationBranch,
   type RemediationMode,
   type Snapshot,
@@ -44,14 +52,18 @@ import {
   type TeachingStyle,
   type TreeNode,
 } from "@/lib/api";
-import { findFirstFile } from "@/lib/tree";
 import { useRealtimeLearningSession } from "@/hooks/useRealtimeLearningSession";
 import { useDeepLearningTask } from "@/hooks/useDeepLearningTask";
 import { routeQuestionToDeepTask } from "@/lib/deep-tasks";
 
 import { AssistantPanel } from "./AssistantPanel";
+import { ChangeBriefPanel } from "./ChangeBriefPanel";
+import { CodeFocusPanel } from "./CodeFocusPanel";
 import { CodePanel, type CodeHighlight } from "./CodePanel";
+import { FeatureFlowPanel } from "./FeatureFlowPanel";
 import { FileTree } from "./FileTree";
+import { ProjectMapPanel } from "./ProjectMapPanel";
+import { StartHerePanel } from "./StartHerePanel";
 
 const STAGES = [
   "pending",
@@ -72,11 +84,12 @@ const STAGE_LABELS: Record<string, string> = {
   graph_building: "관계 생성",
   chunking: "코드 청킹",
   embedding: "검색 인덱싱",
-  guidance: "학습 근거 구성",
+  guidance: "지도 근거 구성",
   ready: "분석 완료",
 };
 
 type MobilePane = "tree" | "code" | "guide";
+type WorkspaceMode = "map" | "flow" | "explorer" | "change" | "learning";
 
 export function RepositoryWorkbench() {
   const [repositoryUrl, setRepositoryUrl] = useState("");
@@ -91,6 +104,17 @@ export function RepositoryWorkbench() {
   const [symbols, setSymbols] = useState<SymbolRecord[]>([]);
   const [graph, setGraph] = useState<GraphData | null>(null);
   const [startHere, setStartHere] = useState<StartHere | null>(null);
+  const [projectMap, setProjectMap] = useState<ProjectMap | null>(null);
+  const [projectMapLoading, setProjectMapLoading] = useState(false);
+  const [featureFlowCatalog, setFeatureFlowCatalog] =
+    useState<FeatureFlowCatalog | null>(null);
+  const [selectedFeatureFlowId, setSelectedFeatureFlowId] = useState<string | null>(null);
+  const [featureFlowDetail, setFeatureFlowDetail] = useState<FeatureFlowDetail | null>(null);
+  const [featureFlowLoading, setFeatureFlowLoading] = useState(false);
+  const [featureFlowDetailLoading, setFeatureFlowDetailLoading] = useState(false);
+  const [featureFlowError, setFeatureFlowError] = useState<string | null>(null);
+  const [featureFlowReload, setFeatureFlowReload] = useState(0);
+  const [explorerLoading, setExplorerLoading] = useState(false);
   const [learningPath, setLearningPath] = useState<LearningPath | null>(null);
   const [learningSession, setLearningSession] = useState<LearningSession | null>(null);
   const [learningActivity, setLearningActivity] = useState<LearningActivity | null>(null);
@@ -106,21 +130,40 @@ export function RepositoryWorkbench() {
   const [answers, setAnswers] = useState<ChatAnswer[]>([]);
   const [asking, setAsking] = useState(false);
   const [selection, setSelection] = useState<CodeSelection | null>(null);
+  const [codeExplanation, setCodeExplanation] = useState<CodeExplanation | null>(null);
+  const [codeFocusLoading, setCodeFocusLoading] = useState(false);
+  const [codeFocusError, setCodeFocusError] = useState<string | null>(null);
   const [highlight, setHighlight] = useState<CodeHighlight | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [fileLoading, setFileLoading] = useState(false);
   const [view, setView] = useState<"code" | "graph">("code");
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("map");
   const [mobilePane, setMobilePane] = useState<MobilePane>("code");
+  const loadedProjectMap = useRef<string | null>(null);
+  const loadedFeatureFlowCatalog = useRef<string | null>(null);
+  const loadedFeatureFlowDetail = useRef<string | null>(null);
+  const loadedExplorer = useRef<string | null>(null);
+  const featureFlowDetailRequestSequence = useRef(0);
+  const openFileRequestSequence = useRef(0);
+  const codeFocusRequestSequence = useRef(0);
+  const codeFocusContext = useRef<{
+    featureFlowId?: string | null;
+    flowStepId?: string | null;
+  } | null>(null);
   const loadedSnapshot = useRef<string | null>(null);
   const assessmentRequest = useRef<string | null>(null);
   const voiceQuestionHandler = useRef<(transcript: string) => void>(() => undefined);
   const voiceLearningSessionId = useRef<string | null>(null);
   const deepLearningSessionId = useRef<string | null>(null);
   const activeAssessmentId =
-    assessment?.status === "active" ? assessment.id : null;
+    workspaceMode === "learning" && assessment?.status === "active"
+      ? assessment.id
+      : null;
   const masteryProfileId =
-    assessment && assessment.status !== "active" ? profile?.id ?? null : null;
+    workspaceMode === "learning" && assessment && assessment.status !== "active"
+      ? profile?.id ?? null
+      : null;
   const exchangeVoiceSdp = useCallback(
     (sdp: string, signal: AbortSignal) => {
       if (!learningSession) {
@@ -148,7 +191,7 @@ export function RepositoryWorkbench() {
       _task: DeepTask,
       request: DeepTaskRequest | null,
     ) => {
-      if ("id" in answer) {
+      if ("session_id" in answer) {
         setAnswers((current) =>
           current.some((item) => item.id === answer.id)
             ? current
@@ -156,17 +199,20 @@ export function RepositoryWorkbench() {
         );
       }
       if (request?.modality === "voice") {
-        speakVerifiedText(
-          "id" in answer
-            ? answerForVoice(answer)
-            : answer.voice_summary || answer.answer,
-        );
+        if ("session_id" in answer) {
+          speakVerifiedText(answerForVoice(answer));
+        } else if ("voice_summary" in answer) {
+          speakVerifiedText(answer.voice_summary || answer.answer);
+        }
       }
     },
     [speakVerifiedText],
   );
   const deepLearningTask = useDeepLearningTask({
     onCompleted: handleDeepTaskCompleted,
+  });
+  const changeBriefTask = useDeepLearningTask({
+    createTask: api.createNavigationDeepTask,
   });
   const {
     cancel: cancelDeepTask,
@@ -178,6 +224,15 @@ export function RepositoryWorkbench() {
     start: startDeepTask,
     task: activeDeepTask,
   } = deepLearningTask;
+  const {
+    cancel: cancelChangeBrief,
+    error: changeBriefError,
+    isCancelling: isChangeBriefCancelling,
+    isStarting: isChangeBriefStarting,
+    reset: resetChangeBrief,
+    start: startChangeBriefTask,
+    task: activeChangeBriefTask,
+  } = changeBriefTask;
 
   useEffect(() => {
     const nextSessionId = learningSession?.id ?? null;
@@ -190,6 +245,12 @@ export function RepositoryWorkbench() {
     }
     voiceLearningSessionId.current = nextSessionId;
   }, [isVoiceConnected, learningSession?.id, stopVoiceSession]);
+
+  useEffect(() => {
+    if (workspaceMode !== "learning" && isVoiceConnected) {
+      stopVoiceSession();
+    }
+  }, [isVoiceConnected, stopVoiceSession, workspaceMode]);
 
   useEffect(() => {
     const nextSessionId = learningSession?.id ?? null;
@@ -243,6 +304,164 @@ export function RepositoryWorkbench() {
   }, [snapshot]);
 
   useEffect(() => {
+    if (!snapshot || snapshot.status !== "ready") return;
+    const snapshotId = snapshot.id;
+    if (loadedProjectMap.current === snapshotId) return;
+    loadedProjectMap.current = snapshotId;
+    let cancelled = false;
+    setProjectMapLoading(true);
+    api
+      .getProjectMap(snapshotId)
+      .then((nextMap) => {
+        if (!cancelled) setProjectMap(nextMap);
+      })
+      .catch((reason: unknown) => {
+        if (cancelled) return;
+        loadedProjectMap.current = null;
+        setError(errorMessage(reason));
+      })
+      .finally(() => {
+        if (!cancelled) setProjectMapLoading(false);
+      });
+    return () => {
+      cancelled = true;
+      if (loadedProjectMap.current === snapshotId) {
+        loadedProjectMap.current = null;
+      }
+    };
+  }, [snapshot]);
+
+  useEffect(() => {
+    if (!snapshot || snapshot.status !== "ready" || workspaceMode !== "flow") return;
+    const snapshotId = snapshot.id;
+    if (featureFlowCatalog?.snapshot_id === snapshotId) return;
+    if (loadedFeatureFlowCatalog.current === snapshotId) return;
+    loadedFeatureFlowCatalog.current = snapshotId;
+    let cancelled = false;
+    setFeatureFlowLoading(true);
+    setFeatureFlowError(null);
+    api
+      .getFeatureFlows(snapshotId)
+      .then((nextCatalog) => {
+        if (!cancelled) setFeatureFlowCatalog(nextCatalog);
+      })
+      .catch((reason: unknown) => {
+        if (cancelled) return;
+        loadedFeatureFlowCatalog.current = null;
+        setFeatureFlowError(errorMessage(reason));
+      })
+      .finally(() => {
+        if (!cancelled) setFeatureFlowLoading(false);
+      });
+    return () => {
+      cancelled = true;
+      if (loadedFeatureFlowCatalog.current === snapshotId) {
+        loadedFeatureFlowCatalog.current = null;
+      }
+    };
+  }, [featureFlowCatalog?.snapshot_id, featureFlowReload, snapshot, workspaceMode]);
+
+  useEffect(() => {
+    if (
+      !snapshot ||
+      snapshot.status !== "ready" ||
+      workspaceMode !== "flow" ||
+      !selectedFeatureFlowId
+    ) {
+      return;
+    }
+    const requestKey = `${snapshot.id}:${selectedFeatureFlowId}`;
+    if (
+      featureFlowDetail?.id === selectedFeatureFlowId ||
+      loadedFeatureFlowDetail.current === requestKey
+    ) {
+      return;
+    }
+    loadedFeatureFlowDetail.current = requestKey;
+    const requestSequence = ++featureFlowDetailRequestSequence.current;
+    let cancelled = false;
+    setFeatureFlowDetailLoading(true);
+    setFeatureFlowError(null);
+    api
+      .getFeatureFlow(snapshot.id, selectedFeatureFlowId)
+      .then((nextFlow) => {
+        if (
+          !cancelled &&
+          featureFlowDetailRequestSequence.current === requestSequence
+        ) {
+          setFeatureFlowDetail(nextFlow);
+        }
+      })
+      .catch((reason: unknown) => {
+        if (
+          cancelled ||
+          featureFlowDetailRequestSequence.current !== requestSequence
+        ) {
+          return;
+        }
+        loadedFeatureFlowDetail.current = null;
+        setFeatureFlowError(errorMessage(reason));
+      })
+      .finally(() => {
+        if (featureFlowDetailRequestSequence.current === requestSequence) {
+          setFeatureFlowDetailLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+      if (featureFlowDetailRequestSequence.current === requestSequence) {
+        featureFlowDetailRequestSequence.current += 1;
+        setFeatureFlowDetailLoading(false);
+      }
+      if (loadedFeatureFlowDetail.current === requestKey) {
+        loadedFeatureFlowDetail.current = null;
+      }
+    };
+  }, [featureFlowDetail, featureFlowReload, selectedFeatureFlowId, snapshot, workspaceMode]);
+
+  useEffect(() => {
+    if (
+      !snapshot ||
+      snapshot.status !== "ready" ||
+      (workspaceMode !== "explorer" &&
+        workspaceMode !== "change" &&
+        workspaceMode !== "learning")
+    ) {
+      return;
+    }
+    const snapshotId = snapshot.id;
+    if (loadedExplorer.current === snapshotId) return;
+    loadedExplorer.current = snapshotId;
+    let cancelled = false;
+    setExplorerLoading(true);
+    Promise.all([
+      api.getTree(snapshotId),
+      api.getStartHere(snapshotId),
+      api.getGraph(snapshotId),
+    ])
+      .then(([nextTree, nextStartHere, nextGraph]) => {
+        if (cancelled) return;
+        setTree(nextTree);
+        setStartHere(nextStartHere);
+        setGraph(nextGraph);
+      })
+      .catch((reason: unknown) => {
+        if (cancelled) return;
+        loadedExplorer.current = null;
+        setError(errorMessage(reason));
+      })
+      .finally(() => {
+        if (!cancelled) setExplorerLoading(false);
+      });
+    return () => {
+      cancelled = true;
+      if (loadedExplorer.current === snapshotId) {
+        loadedExplorer.current = null;
+      }
+    };
+  }, [snapshot, workspaceMode]);
+
+  useEffect(() => {
     if (!activeAssessmentId) return;
     const interval = window.setInterval(() => {
       api
@@ -273,7 +492,14 @@ export function RepositoryWorkbench() {
   }, [masteryProfileId]);
 
   useEffect(() => {
-    if (!snapshot || !profile || assessment?.snapshot_id === snapshot.id) return;
+    if (
+      workspaceMode !== "learning" ||
+      !snapshot ||
+      !profile ||
+      assessment?.snapshot_id === snapshot.id
+    ) {
+      return;
+    }
     const requestKey = `${snapshot.id}:${profile.id}`;
     if (assessmentRequest.current === requestKey) return;
     assessmentRequest.current = requestKey;
@@ -287,11 +513,12 @@ export function RepositoryWorkbench() {
         assessmentRequest.current = null;
         setError(errorMessage(reason));
       });
-  }, [assessment, profile, snapshot]);
+  }, [assessment, profile, snapshot, workspaceMode]);
 
   useEffect(() => {
     const assessmentFinished = assessment && assessment.status !== "active";
     if (
+      workspaceMode !== "learning" ||
       !snapshot ||
       snapshot.status !== "ready" ||
       !profile ||
@@ -308,17 +535,10 @@ export function RepositoryWorkbench() {
     setTeachingStyle(style);
     setJourneyBusy(true);
 
-    Promise.all([
-      api.getTree(snapshotId),
-      api.getStartHere(snapshotId),
-      api.getGraph(snapshotId),
-      api.createLearningPath(snapshotId, profile.id),
-    ])
-      .then(async ([nextTree, nextStartHere, nextGraph, nextPath]) => {
+    api
+      .createLearningPath(snapshotId, profile.id)
+      .then(async (nextPath) => {
         const nextSession = await api.createLearningSession(nextPath.id, style);
-        setTree(nextTree);
-        setStartHere(nextStartHere);
-        setGraph(nextGraph);
         setLearningPath(nextPath);
         setLearningSession(nextSession);
         setChatSessionId(nextSession.chat_session_id);
@@ -326,9 +546,7 @@ export function RepositoryWorkbench() {
 
         const current = findCurrentLesson(nextPath, nextSession);
         const evidence = current?.lesson.steps[0]?.evidence;
-        const firstEntry = nextStartHere.entry_points[0]?.file_id;
-        const firstFile = findFirstFile(nextTree)?.file_id;
-        const fileId = evidence?.file_id ?? firstEntry ?? firstFile;
+        const fileId = evidence?.file_id;
         if (fileId) {
           setFileLoading(true);
           const [nextFile, nextSymbols] = await Promise.all([
@@ -355,7 +573,7 @@ export function RepositoryWorkbench() {
         setError(errorMessage(reason));
       })
       .finally(() => setJourneyBusy(false));
-  }, [assessment, profile, snapshot]);
+  }, [assessment, profile, snapshot, workspaceMode]);
 
   useEffect(() => {
     if (!selection || !learningSession) return;
@@ -407,12 +625,28 @@ export function RepositoryWorkbench() {
 
   function resetRepositoryState() {
     resetDeepTask();
+    resetChangeBrief();
     setAssessment(null);
     setTree([]);
     setFile(null);
     setSymbols([]);
     setGraph(null);
     setStartHere(null);
+    setProjectMap(null);
+    setProjectMapLoading(false);
+    setFeatureFlowCatalog(null);
+    setSelectedFeatureFlowId(null);
+    setFeatureFlowDetail(null);
+    setFeatureFlowLoading(false);
+    setFeatureFlowDetailLoading(false);
+    setFeatureFlowError(null);
+    setFeatureFlowReload(0);
+    featureFlowDetailRequestSequence.current += 1;
+    openFileRequestSequence.current += 1;
+    codeFocusRequestSequence.current += 1;
+    codeFocusContext.current = null;
+    setFileLoading(false);
+    setExplorerLoading(false);
     setLearningPath(null);
     setLearningSession(null);
     setLearningActivity(null);
@@ -426,9 +660,99 @@ export function RepositoryWorkbench() {
     setSessionTeachingStyle(null);
     setAnswers([]);
     setSelection(null);
+    setCodeExplanation(null);
+    setCodeFocusLoading(false);
+    setCodeFocusError(null);
     setHighlight(null);
+    setWorkspaceMode("map");
+    setMobilePane("code");
+    loadedProjectMap.current = null;
+    loadedFeatureFlowCatalog.current = null;
+    loadedFeatureFlowDetail.current = null;
+    loadedExplorer.current = null;
     loadedSnapshot.current = null;
     assessmentRequest.current = null;
+  }
+
+  function showProjectMap() {
+    setWorkspaceMode("map");
+  }
+
+  function openExplorer() {
+    setWorkspaceMode("explorer");
+    setMobilePane("code");
+  }
+
+  function openChangeBrief() {
+    setWorkspaceMode("change");
+    setMobilePane("guide");
+  }
+
+  function openFeatureFlows(flowId?: string) {
+    featureFlowDetailRequestSequence.current += 1;
+    setWorkspaceMode("flow");
+    setFeatureFlowError(null);
+    setSelectedFeatureFlowId(flowId ?? null);
+    setFeatureFlowDetail(null);
+    setFeatureFlowDetailLoading(false);
+  }
+
+  function showFeatureFlowCatalog() {
+    featureFlowDetailRequestSequence.current += 1;
+    setFeatureFlowError(null);
+    setSelectedFeatureFlowId(null);
+    setFeatureFlowDetail(null);
+    setFeatureFlowDetailLoading(false);
+    loadedFeatureFlowDetail.current = null;
+  }
+
+  function retryFeatureFlow() {
+    setFeatureFlowError(null);
+    if (selectedFeatureFlowId) {
+      setFeatureFlowDetail(null);
+      loadedFeatureFlowDetail.current = null;
+    } else {
+      setFeatureFlowCatalog(null);
+      loadedFeatureFlowCatalog.current = null;
+    }
+    setFeatureFlowReload((current) => current + 1);
+  }
+
+  function startLearning() {
+    setWorkspaceMode("learning");
+    setMobilePane("guide");
+  }
+
+  function openNavigationEvidence(
+    evidence: ProjectMapEvidence | FeatureFlowEvidence,
+    context?: { featureFlowId?: string | null; flowStepId?: string | null },
+  ) {
+    const nextSelection: CodeSelection = {
+      file_id: evidence.file_id,
+      start_line: evidence.start_line,
+      end_line: evidence.end_line,
+    };
+    setWorkspaceMode("explorer");
+    setMobilePane("code");
+    void openFile(evidence.file_id, {
+      fileId: evidence.file_id,
+      startLine: evidence.start_line,
+      endLine: evidence.end_line,
+    });
+    setSelection(nextSelection);
+    codeFocusContext.current = context ?? null;
+    void loadCodeFocus(nextSelection, "minimum", context);
+  }
+
+  function openMapEvidence(evidence: ProjectMapEvidence) {
+    openNavigationEvidence(evidence);
+  }
+
+  function openFeatureFlowEvidence(
+    evidence: FeatureFlowEvidence,
+    context?: { featureFlowId: string; flowStepId?: string },
+  ) {
+    openNavigationEvidence(evidence, context);
   }
 
   async function answerAssessment(itemId: string, answer: string) {
@@ -480,24 +804,134 @@ export function RepositoryWorkbench() {
 
   async function openFile(fileId: string, nextHighlight: CodeHighlight | null = null) {
     if (!snapshot) return;
+    const requestSequence = ++openFileRequestSequence.current;
+    const snapshotId = snapshot.id;
     setFileLoading(true);
     setError(null);
     setSelection(null);
+    setCodeExplanation(null);
+    setCodeFocusError(null);
+    setCodeFocusLoading(false);
+    codeFocusRequestSequence.current += 1;
+    codeFocusContext.current = null;
     try {
       const [nextFile, nextSymbols] = await Promise.all([
-        api.getFile(snapshot.id, fileId),
-        api.getSymbols(snapshot.id, fileId),
+        api.getFile(snapshotId, fileId),
+        api.getSymbols(snapshotId, fileId),
       ]);
+      if (openFileRequestSequence.current !== requestSequence) return;
       setFile(nextFile);
       setSymbols(nextSymbols);
       setHighlight(nextHighlight);
       setView("code");
       setMobilePane("code");
     } catch (reason) {
-      setError(errorMessage(reason));
+      if (openFileRequestSequence.current === requestSequence) {
+        setError(errorMessage(reason));
+      }
     } finally {
-      setFileLoading(false);
+      if (openFileRequestSequence.current === requestSequence) {
+        setFileLoading(false);
+      }
     }
+  }
+
+  async function loadCodeFocus(
+    targetSelection: CodeSelection,
+    depth: CodeExplanationDepth = "minimum",
+    context = codeFocusContext.current ?? undefined,
+  ) {
+    if (!snapshot) return;
+    const requestSequence = ++codeFocusRequestSequence.current;
+    const snapshotId = snapshot.id;
+    codeFocusContext.current = context ?? null;
+    setCodeFocusLoading(true);
+    setCodeFocusError(null);
+    try {
+      const explanation = await api.createCodeExplanation(
+        snapshotId,
+        targetSelection,
+        depth,
+        context,
+      );
+      if (codeFocusRequestSequence.current !== requestSequence) return;
+      setCodeExplanation(explanation);
+      setSelection(explanation.selection);
+    } catch (reason) {
+      if (codeFocusRequestSequence.current === requestSequence) {
+        setCodeFocusError(errorMessage(reason));
+      }
+    } finally {
+      if (codeFocusRequestSequence.current === requestSequence) {
+        setCodeFocusLoading(false);
+      }
+    }
+  }
+
+  function explainCurrentSelection(depth: CodeExplanationDepth) {
+    const targetSelection = codeExplanation?.selection ?? selection;
+    if (!targetSelection) return;
+    void loadCodeFocus(targetSelection, depth);
+  }
+
+  async function requestChangeBrief(prompt: string) {
+    if (!snapshot || !selection) return;
+    try {
+      let sessionId = learningSession?.chat_session_id ?? chatSessionId;
+      if (!sessionId) {
+        const session = await api.createChatSession(snapshot.id, teachingStyle);
+        sessionId = session.id;
+        setChatSessionId(sessionId);
+        setSessionTeachingStyle(session.preferred_style as TeachingStyle);
+      }
+      await startChangeBriefTask(sessionId, {
+        kind: "impact_analysis",
+        prompt,
+        selection,
+        navigation_context: {
+          feature_key:
+            codeFocusContext.current?.featureFlowId ?? selectedFeatureFlowId,
+          flow_step_id: codeFocusContext.current?.flowStepId ?? null,
+          selection,
+          explanation_depth: codeExplanation?.depth ?? "minimum",
+        },
+        modality: "text",
+      });
+    } catch (reason) {
+      setError(errorMessage(reason));
+    }
+  }
+
+  function openChangeBriefEvidence(evidence: ProjectMapEvidence) {
+    void openFile(evidence.file_id, {
+      fileId: evidence.file_id,
+      startLine: evidence.start_line,
+      endLine: evidence.end_line,
+    });
+    setSelection({
+      file_id: evidence.file_id,
+      start_line: evidence.start_line,
+      end_line: evidence.end_line,
+    });
+    setWorkspaceMode("change");
+  }
+
+  function openCodeFocusEvidence(evidence: ProjectMapEvidence) {
+    if (file?.id === evidence.file_id) {
+      setHighlight({
+        fileId: evidence.file_id,
+        startLine: evidence.start_line,
+        endLine: evidence.end_line,
+      });
+      setSelection({
+        file_id: evidence.file_id,
+        start_line: evidence.start_line,
+        end_line: evidence.end_line,
+      });
+      setMobilePane("code");
+      return;
+    }
+    openNavigationEvidence(evidence);
   }
 
   function openEvidence(citation: Citation) {
@@ -655,9 +1089,25 @@ export function RepositoryWorkbench() {
     }
   }
 
-  const handleSelectionChange = useCallback((nextSelection: CodeSelection | null) => {
-    setSelection(nextSelection);
-  }, []);
+  const handleSelectionChange = useCallback(
+    (nextSelection: CodeSelection | null) => {
+      setSelection(nextSelection);
+      if (
+        nextSelection &&
+        codeExplanation &&
+        (codeExplanation.selection.file_id !== nextSelection.file_id ||
+          codeExplanation.selection.start_line !== nextSelection.start_line ||
+          codeExplanation.selection.end_line !== nextSelection.end_line)
+      ) {
+        codeFocusRequestSequence.current += 1;
+        codeFocusContext.current = null;
+        setCodeExplanation(null);
+        setCodeFocusLoading(false);
+        setCodeFocusError(null);
+      }
+    },
+    [codeExplanation],
+  );
 
   const requestQuestion = useCallback(
     async (
@@ -766,7 +1216,7 @@ export function RepositoryWorkbench() {
           </span>
           <div>
             <strong>RepoWise AI</strong>
-            <span>Codebase learning workspace</span>
+            <span>Repository navigation workspace</span>
           </div>
         </div>
         <div className={`service-status ${health?.status === "ready" ? "is-ready" : ""}`}>
@@ -851,6 +1301,84 @@ export function RepositoryWorkbench() {
         </div>
       ) : null}
 
+      {snapshot?.status === "ready" ? (
+        <nav aria-label="저장소 보기 방식" className="workspace-mode-switcher">
+          <button
+            aria-current={workspaceMode === "map" ? "page" : undefined}
+            aria-pressed={workspaceMode === "map"}
+            className={workspaceMode === "map" ? "is-active" : ""}
+            onClick={showProjectMap}
+            type="button"
+          >
+            <Waypoints aria-hidden size={14} /> 프로젝트 지도
+          </button>
+          <button
+            aria-current={workspaceMode === "flow" ? "page" : undefined}
+            aria-pressed={workspaceMode === "flow"}
+            className={workspaceMode === "flow" ? "is-active" : ""}
+            onClick={() => openFeatureFlows()}
+            type="button"
+          >
+            <Activity aria-hidden size={14} /> 기능 흐름
+          </button>
+          <button
+            aria-current={workspaceMode === "explorer" ? "page" : undefined}
+            aria-pressed={workspaceMode === "explorer"}
+            className={workspaceMode === "explorer" ? "is-active" : ""}
+            onClick={openExplorer}
+            type="button"
+          >
+            <Braces aria-hidden size={14} /> 원본 코드 탐색
+          </button>
+          <button
+            aria-current={workspaceMode === "change" ? "page" : undefined}
+            aria-pressed={workspaceMode === "change"}
+            className={workspaceMode === "change" ? "is-active" : ""}
+            onClick={openChangeBrief}
+            type="button"
+          >
+            <ShieldAlert aria-hidden size={14} /> 변경 영향
+          </button>
+          <button
+            aria-current={workspaceMode === "learning" ? "page" : undefined}
+            aria-pressed={workspaceMode === "learning"}
+            className={workspaceMode === "learning" ? "is-active" : ""}
+            onClick={startLearning}
+            type="button"
+          >
+            <PanelRight aria-hidden size={14} /> 깊이 배우기
+          </button>
+        </nav>
+      ) : null}
+
+      {workspaceMode === "map" ? (
+        <ProjectMapPanel
+          loading={projectMapLoading || Boolean(isAnalyzing)}
+          map={projectMap}
+          featureFlows={featureFlowCatalog?.flows ?? []}
+          onOpenExplorer={openExplorer}
+          onOpenFeatureFlows={openFeatureFlows}
+          onOpenEvidence={openMapEvidence}
+          onStartLearning={startLearning}
+          snapshot={snapshot}
+        />
+      ) : workspaceMode === "flow" ? (
+        <FeatureFlowPanel
+          catalog={featureFlowCatalog}
+          detailLoading={featureFlowDetailLoading}
+          error={featureFlowError}
+          flow={featureFlowDetail}
+          loading={featureFlowLoading}
+          onBackToCatalog={showFeatureFlowCatalog}
+          onBackToMap={showProjectMap}
+          onOpenEvidence={openFeatureFlowEvidence}
+          onRetry={retryFeatureFlow}
+          onSelectFlow={(flowId) => openFeatureFlows(flowId)}
+          onStartLearning={startLearning}
+        />
+      ) : (
+        <>
+
       <div className="mobile-pane-tabs" aria-label="Workspace panes">
         <button
           className={mobilePane === "tree" ? "is-active" : ""}
@@ -871,7 +1399,14 @@ export function RepositoryWorkbench() {
           onClick={() => setMobilePane("guide")}
           type="button"
         >
-          <PanelRight aria-hidden size={15} /> 학습
+          <PanelRight aria-hidden size={15} />
+          {workspaceMode === "learning"
+            ? "학습"
+            : workspaceMode === "change"
+              ? "영향"
+            : codeExplanation || codeFocusLoading || selection
+              ? "설명"
+              : "개요"}
         </button>
       </div>
 
@@ -891,7 +1426,11 @@ export function RepositoryWorkbench() {
             />
           ) : (
             <div className="panel-empty compact-empty">
-              <span>{isAnalyzing ? "파일 구조를 분석 중입니다." : "분석할 저장소를 입력하세요."}</span>
+              <span>
+                {explorerLoading
+                  ? "원본 파일 구조를 불러오는 중입니다."
+                  : "파일을 선택해 원본 코드를 확인하세요."}
+              </span>
             </div>
           )}
         </aside>
@@ -901,7 +1440,7 @@ export function RepositoryWorkbench() {
             file={file}
             graph={graph}
             highlight={highlight}
-            loading={fileLoading}
+            loading={fileLoading || explorerLoading}
             onOpenFile={openFile}
             onSelectionChange={handleSelectionChange}
             onViewChange={setView}
@@ -911,7 +1450,8 @@ export function RepositoryWorkbench() {
         </div>
 
         <div className={`right-panel mobile-${mobilePane === "guide" ? "visible" : "hidden"}`}>
-          <AssistantPanel
+          {workspaceMode === "learning" ? (
+            <AssistantPanel
             activity={
               learningActivity?.step_id === learningSession?.current_step_id
                 ? learningActivity
@@ -967,9 +1507,40 @@ export function RepositoryWorkbench() {
             startHere={startHere}
             teachingStyle={teachingStyle}
             voiceSession={voiceSession}
-          />
+            />
+          ) : workspaceMode === "change" ? (
+            <ChangeBriefPanel
+              cancelling={isChangeBriefCancelling}
+              error={changeBriefError}
+              onCancel={() => void cancelChangeBrief()}
+              onOpenEvidence={openChangeBriefEvidence}
+              onReset={resetChangeBrief}
+              onStart={(prompt) => void requestChangeBrief(prompt)}
+              selection={selection}
+              starting={isChangeBriefStarting}
+              task={activeChangeBriefTask}
+            />
+          ) : codeExplanation || codeFocusLoading || codeFocusError || selection ? (
+            <CodeFocusPanel
+              error={codeFocusError}
+              explanation={codeExplanation}
+              loading={codeFocusLoading}
+              onExplain={explainCurrentSelection}
+              onOpenEvidence={openCodeFocusEvidence}
+              onRequestChangeBrief={openChangeBrief}
+              selection={selection}
+            />
+          ) : (
+            <StartHerePanel
+              onOpenFile={openFile}
+              snapshot={snapshot}
+              startHere={startHere}
+            />
+          )}
         </div>
       </section>
+        </>
+      )}
     </main>
   );
 }

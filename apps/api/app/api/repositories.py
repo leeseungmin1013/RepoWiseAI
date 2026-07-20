@@ -2,21 +2,39 @@ import json
 from collections import Counter
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, load_only, selectinload
 
 from app.analysis.tree import build_file_tree
 from app.core.db import get_db
 from app.models import AnalysisJob, FileRecord, Repository, RepositorySnapshot, Symbol, SymbolEdge
+from app.navigation.artifacts import (
+    ArtifactWrite,
+    load_navigation_artifact,
+    write_navigation_artifacts,
+)
+from app.navigation.code_focus import SEMANTIC_FOCUS_RELATIONS, build_code_explanation
+from app.navigation.feature_flow import build_feature_flow, build_feature_flows
+from app.navigation.project_map import build_project_map
+from app.navigation.versions import (
+    CODE_EXPLANATION_VERSION,
+    FEATURE_FLOW_VERSION,
+    PROJECT_MAP_VERSION,
+)
 from app.queue import enqueue_repository_analysis
 from app.schemas import (
     AnalysisJobResponse,
+    CodeExplanationCreate,
+    CodeExplanationResponse,
     EntryPoint,
+    FeatureFlowDetail,
+    FeatureFlowListResponse,
     FileResponse,
     GraphEdge,
     GraphNode,
     GraphResponse,
+    ProjectMapResponse,
     RepositoryCreate,
     RepositoryCreateResponse,
     RepositorySummary,
@@ -220,6 +238,349 @@ def get_graph(snapshot_id: str, db: SessionDep):
         )
 
     return GraphResponse(nodes=list(graph_nodes.values()), edges=graph_edges)
+
+
+@router.get("/snapshots/{snapshot_id}/project-map", response_model=ProjectMapResponse)
+def get_project_map(snapshot_id: str, response: Response, db: SessionDep):
+    snapshot = load_snapshot(db, snapshot_id)
+    require_ready(snapshot)
+    commit_sha = snapshot.commit_sha or ""
+    cached = load_navigation_artifact(
+        db,
+        snapshot_id=snapshot_id,
+        artifact_type="project_map",
+        artifact_key="default",
+        artifact_version=PROJECT_MAP_VERSION,
+        payload_model=ProjectMapResponse,
+        commit_sha=commit_sha,
+    )
+    if cached is not None and cached.snapshot_id == snapshot_id:
+        response.headers["X-Navigation-Cache"] = "HIT"
+        response.headers["X-Navigation-Artifact-Version"] = PROJECT_MAP_VERSION
+        return cached
+    files = db.scalars(
+        select(FileRecord).where(FileRecord.snapshot_id == snapshot_id).order_by(FileRecord.path)
+    ).all()
+    import_edges = db.scalars(
+        select(SymbolEdge).where(
+            SymbolEdge.snapshot_id == snapshot_id,
+            SymbolEdge.relation == "IMPORTS",
+        )
+    ).all()
+    project_map = build_project_map(snapshot, files, import_edges)
+    stored = write_navigation_artifacts(
+        db,
+        snapshot_id=snapshot_id,
+        commit_sha=commit_sha,
+        artifacts=[
+            ArtifactWrite(
+                artifact_type="project_map",
+                artifact_key="default",
+                artifact_version=PROJECT_MAP_VERSION,
+                payload=project_map,
+                generation_metadata={"semantic_graph_version": snapshot.parser_version},
+            )
+        ],
+    )
+    response.headers["X-Navigation-Cache"] = "MISS"
+    response.headers["X-Navigation-Cache-Write"] = "STORED" if stored else "SKIPPED"
+    response.headers["X-Navigation-Artifact-Version"] = PROJECT_MAP_VERSION
+    return project_map
+
+
+def load_feature_flow_context(snapshot_id: str, db: Session):
+    files = db.scalars(
+        select(FileRecord)
+        .where(FileRecord.snapshot_id == snapshot_id)
+        .options(load_only(FileRecord.id, FileRecord.path, FileRecord.line_count))
+        .order_by(FileRecord.path)
+    ).all()
+    symbols = db.scalars(
+        select(Symbol)
+        .where(Symbol.snapshot_id == snapshot_id)
+        .options(
+            load_only(
+                Symbol.id,
+                Symbol.file_id,
+                Symbol.qualified_name,
+                Symbol.display_name,
+                Symbol.start_line,
+                Symbol.end_line,
+            )
+        )
+        .order_by(Symbol.file_id, Symbol.start_line, Symbol.id)
+    ).all()
+    semantic_edges = db.scalars(
+        select(SymbolEdge)
+        .where(
+            SymbolEdge.snapshot_id == snapshot_id,
+            SymbolEdge.relation.in_(
+                (
+                    "TRIGGERS",
+                    "REQUESTS",
+                    "HANDLED_BY",
+                    "READS",
+                    "WRITES",
+                    "NAVIGATES_TO",
+                    "USES_EXTERNAL",
+                )
+            ),
+        )
+        .options(
+            load_only(
+                SymbolEdge.id,
+                SymbolEdge.source_file_id,
+                SymbolEdge.source_symbol_id,
+                SymbolEdge.target_symbol_id,
+                SymbolEdge.target_path,
+                SymbolEdge.relation,
+                SymbolEdge.confidence,
+                SymbolEdge.source_start_line,
+                SymbolEdge.source_end_line,
+                SymbolEdge.metadata_json,
+            )
+        )
+    ).all()
+    return files, symbols, semantic_edges
+
+
+@router.get("/snapshots/{snapshot_id}/feature-flows", response_model=FeatureFlowListResponse)
+def get_feature_flows(snapshot_id: str, response: Response, db: SessionDep):
+    snapshot = load_snapshot(db, snapshot_id)
+    require_ready(snapshot)
+    commit_sha = snapshot.commit_sha or ""
+    cached = load_navigation_artifact(
+        db,
+        snapshot_id=snapshot_id,
+        artifact_type="feature_flow_catalog",
+        artifact_key="representative",
+        artifact_version=FEATURE_FLOW_VERSION,
+        payload_model=FeatureFlowListResponse,
+        commit_sha=commit_sha,
+    )
+    if cached is not None and cached.snapshot_id == snapshot_id:
+        response.headers["X-Navigation-Cache"] = "HIT"
+        response.headers["X-Navigation-Artifact-Version"] = FEATURE_FLOW_VERSION
+        return cached
+    files, symbols, semantic_edges = load_feature_flow_context(snapshot_id, db)
+    catalog = build_feature_flows(snapshot, files, symbols, semantic_edges)
+    writes = [
+        ArtifactWrite(
+            artifact_type="feature_flow_catalog",
+            artifact_key="representative",
+            artifact_version=FEATURE_FLOW_VERSION,
+            payload=catalog,
+            generation_metadata={"semantic_graph_version": snapshot.parser_version},
+        )
+    ]
+    for summary in catalog.flows:
+        detail = build_feature_flow(
+            snapshot, files, symbols, semantic_edges, summary.id
+        )
+        if detail is not None:
+            writes.append(
+                ArtifactWrite(
+                    artifact_type="feature_flow_detail",
+                    artifact_key=summary.id,
+                    artifact_version=FEATURE_FLOW_VERSION,
+                    payload=detail,
+                    generation_metadata={
+                        "semantic_graph_version": snapshot.parser_version
+                    },
+                )
+            )
+    stored = write_navigation_artifacts(
+        db,
+        snapshot_id=snapshot_id,
+        commit_sha=commit_sha,
+        artifacts=writes,
+    )
+    response.headers["X-Navigation-Cache"] = "MISS"
+    response.headers["X-Navigation-Cache-Write"] = "STORED" if stored else "SKIPPED"
+    response.headers["X-Navigation-Artifact-Version"] = FEATURE_FLOW_VERSION
+    return catalog
+
+
+@router.get(
+    "/snapshots/{snapshot_id}/feature-flows/{flow_id}",
+    response_model=FeatureFlowDetail,
+)
+def get_feature_flow(snapshot_id: str, flow_id: str, response: Response, db: SessionDep):
+    snapshot = load_snapshot(db, snapshot_id)
+    require_ready(snapshot)
+    commit_sha = snapshot.commit_sha or ""
+    cached = load_navigation_artifact(
+        db,
+        snapshot_id=snapshot_id,
+        artifact_type="feature_flow_detail",
+        artifact_key=flow_id,
+        artifact_version=FEATURE_FLOW_VERSION,
+        payload_model=FeatureFlowDetail,
+        commit_sha=commit_sha,
+    )
+    if cached is not None and cached.id == flow_id:
+        response.headers["X-Navigation-Cache"] = "HIT"
+        response.headers["X-Navigation-Artifact-Version"] = FEATURE_FLOW_VERSION
+        return cached
+    files, symbols, semantic_edges = load_feature_flow_context(snapshot_id, db)
+    flow = build_feature_flow(snapshot, files, symbols, semantic_edges, flow_id)
+    if flow is None:
+        raise HTTPException(status_code=404, detail="Feature flow not found")
+    stored = write_navigation_artifacts(
+        db,
+        snapshot_id=snapshot_id,
+        commit_sha=commit_sha,
+        artifacts=[
+            ArtifactWrite(
+                artifact_type="feature_flow_detail",
+                artifact_key=flow_id,
+                artifact_version=FEATURE_FLOW_VERSION,
+                payload=flow,
+                generation_metadata={"semantic_graph_version": snapshot.parser_version},
+            )
+        ],
+    )
+    response.headers["X-Navigation-Cache"] = "MISS"
+    response.headers["X-Navigation-Cache-Write"] = "STORED" if stored else "SKIPPED"
+    response.headers["X-Navigation-Artifact-Version"] = FEATURE_FLOW_VERSION
+    return flow
+
+
+@router.post(
+    "/snapshots/{snapshot_id}/code-explanations",
+    response_model=CodeExplanationResponse,
+)
+def create_code_explanation(
+    snapshot_id: str,
+    payload: CodeExplanationCreate,
+    response: Response,
+    db: SessionDep,
+):
+    snapshot = load_snapshot(db, snapshot_id)
+    require_ready(snapshot)
+    selection = payload.selection
+    if selection.start_line > selection.end_line:
+        raise HTTPException(
+            status_code=422,
+            detail="Selection start_line must be less than or equal to end_line",
+        )
+    if selection.end_line - selection.start_line + 1 > 80:
+        raise HTTPException(
+            status_code=422,
+            detail="Code Focus supports at most 80 selected lines",
+        )
+
+    commit_sha = snapshot.commit_sha or ""
+    artifact_key = ":".join(
+        (
+            selection.file_id,
+            str(selection.start_line),
+            str(selection.end_line),
+            payload.depth,
+            payload.feature_flow_id or "none",
+            payload.flow_step_id or "none",
+        )
+    )
+    cached = load_navigation_artifact(
+        db,
+        snapshot_id=snapshot_id,
+        artifact_type="code_explanation",
+        artifact_key=artifact_key,
+        artifact_version=CODE_EXPLANATION_VERSION,
+        payload_model=CodeExplanationResponse,
+        commit_sha=commit_sha,
+    )
+    if (
+        cached is not None
+        and cached.snapshot_id == snapshot_id
+        and cached.selection == selection
+    ):
+        response.headers["X-Navigation-Cache"] = "HIT"
+        response.headers["X-Navigation-Artifact-Version"] = CODE_EXPLANATION_VERSION
+        return cached
+
+    file = db.scalar(
+        select(FileRecord).where(
+            FileRecord.snapshot_id == snapshot_id,
+            FileRecord.id == selection.file_id,
+        )
+    )
+    if file is None:
+        raise HTTPException(status_code=404, detail="Selected file not found")
+    if selection.end_line > max(1, file.line_count):
+        raise HTTPException(
+            status_code=422,
+            detail="Selection exceeds the selected file line range",
+        )
+    symbols = db.scalars(
+        select(Symbol)
+        .where(Symbol.snapshot_id == snapshot_id, Symbol.file_id == file.id)
+        .order_by(Symbol.start_line, Symbol.end_line, Symbol.id)
+    ).all()
+    edges = db.scalars(
+        select(SymbolEdge).where(
+            SymbolEdge.snapshot_id == snapshot_id,
+            SymbolEdge.source_file_id == file.id,
+            SymbolEdge.relation.in_(SEMANTIC_FOCUS_RELATIONS),
+        )
+    ).all()
+
+    flow_step = None
+    if payload.feature_flow_id and payload.flow_step_id:
+        flow = load_navigation_artifact(
+            db,
+            snapshot_id=snapshot_id,
+            artifact_type="feature_flow_detail",
+            artifact_key=payload.feature_flow_id,
+            artifact_version=FEATURE_FLOW_VERSION,
+            payload_model=FeatureFlowDetail,
+            commit_sha=commit_sha,
+        )
+        if flow is not None and flow.id == payload.feature_flow_id:
+            candidates = [*flow.normal_steps, *flow.failure_steps]
+            candidate = next(
+                (step for step in candidates if step.id == payload.flow_step_id),
+                None,
+            )
+            if candidate and any(
+                evidence.file_id == selection.file_id
+                and evidence.start_line <= selection.end_line
+                and evidence.end_line >= selection.start_line
+                for evidence in candidate.evidence
+            ):
+                flow_step = candidate
+
+    explanation = build_code_explanation(
+        snapshot=snapshot,
+        file=file,
+        selection=selection,
+        depth=payload.depth,
+        symbols=symbols,
+        edges=edges,
+        flow_step=flow_step,
+    )
+    stored = write_navigation_artifacts(
+        db,
+        snapshot_id=snapshot_id,
+        commit_sha=commit_sha,
+        artifacts=[
+            ArtifactWrite(
+                artifact_type="code_explanation",
+                artifact_key=artifact_key,
+                artifact_version=CODE_EXPLANATION_VERSION,
+                payload=explanation,
+                generation_metadata={
+                    "semantic_graph_version": snapshot.parser_version,
+                    "feature_flow_id": payload.feature_flow_id,
+                    "flow_step_id": payload.flow_step_id,
+                },
+            )
+        ],
+    )
+    response.headers["X-Navigation-Cache"] = "MISS"
+    response.headers["X-Navigation-Cache-Write"] = "STORED" if stored else "SKIPPED"
+    response.headers["X-Navigation-Artifact-Version"] = CODE_EXPLANATION_VERSION
+    return explanation
 
 
 @router.get("/snapshots/{snapshot_id}/start-here", response_model=StartHereResponse)

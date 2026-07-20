@@ -137,6 +137,134 @@ class StartHereResponse(BaseModel):
     suggested_goals: list[str]
 
 
+ProjectMapConfidence = Literal["verified", "inferred", "unknown"]
+
+
+class ProjectMapEvidence(BaseModel):
+    file_id: str
+    path: str
+    start_line: int = Field(ge=1)
+    end_line: int = Field(ge=1)
+    reason: str
+
+
+class ProjectMapTechnology(BaseModel):
+    name: str
+    category: str
+    confidence: ProjectMapConfidence
+    evidence: list[ProjectMapEvidence] = Field(min_length=1)
+
+
+class ProjectMapCapability(BaseModel):
+    id: str
+    name: str
+    description: str
+    confidence: ProjectMapConfidence
+    evidence: list[ProjectMapEvidence] = Field(min_length=1)
+
+
+class ProjectMapSystemArea(BaseModel):
+    id: str
+    name: str
+    description: str
+    confidence: ProjectMapConfidence
+    evidence: list[ProjectMapEvidence] = Field(min_length=1)
+
+
+class ProjectMapExternalService(BaseModel):
+    name: str
+    description: str
+    confidence: ProjectMapConfidence
+    evidence: list[ProjectMapEvidence] = Field(min_length=1)
+
+
+class ProjectMapEnvironmentVariable(BaseModel):
+    name: str
+    description: str
+    confidence: ProjectMapConfidence
+    evidence: list[ProjectMapEvidence] = Field(min_length=1)
+
+
+class ProjectMapReadFirst(ProjectMapEvidence):
+    confidence: ProjectMapConfidence
+
+
+class ProjectMapResponse(BaseModel):
+    repository_name: str
+    snapshot_id: str
+    commit_sha: str
+    summary: str
+    summary_confidence: ProjectMapConfidence
+    tech_stack: list[ProjectMapTechnology]
+    capabilities: list[ProjectMapCapability]
+    system_areas: list[ProjectMapSystemArea]
+    external_services: list[ProjectMapExternalService]
+    environment_variables: list[ProjectMapEnvironmentVariable]
+    read_first: list[ProjectMapReadFirst]
+    limitations: list[str]
+
+
+FeatureFlowConfidence = Literal["verified", "inferred", "unknown"]
+
+
+class FeatureFlowEvidence(BaseModel):
+    file_id: str
+    path: str
+    start_line: int = Field(ge=1)
+    end_line: int = Field(ge=1)
+    reason: str
+
+
+class FeatureFlowSummary(BaseModel):
+    id: str
+    title: str
+    user_goal: str
+    trigger: str
+    outcome: str
+    step_count: int = Field(ge=1)
+    involved_areas: list[str]
+    confidence: FeatureFlowConfidence
+    evidence_coverage: float = Field(ge=0, le=1)
+    entry_evidence: FeatureFlowEvidence
+
+
+class FeatureFlowListResponse(BaseModel):
+    repository_name: str
+    snapshot_id: str
+    commit_sha: str
+    analysis_version: str
+    flows: list[FeatureFlowSummary]
+    limitations: list[str]
+
+
+class FeatureFlowStep(BaseModel):
+    id: str
+    ordinal: int = Field(ge=1)
+    title: str
+    role: str
+    executes_when: str
+    input: str
+    output_or_side_effect: str
+    previous_step_id: str | None = None
+    next_step_id: str | None = None
+    relation_type: str
+    confidence: FeatureFlowConfidence
+    evidence: list[FeatureFlowEvidence] = Field(min_length=1)
+
+
+class FeatureFlowDetail(BaseModel):
+    id: str
+    title: str
+    user_goal: str
+    trigger: str
+    outcome: str
+    normal_steps: list[FeatureFlowStep] = Field(min_length=1)
+    failure_steps: list[FeatureFlowStep]
+    involved_areas: list[str]
+    confidence: FeatureFlowConfidence
+    limitations: list[str]
+
+
 class ChatSessionCreate(BaseModel):
     snapshot_id: str
     goal: str | None = Field(default=None, max_length=500)
@@ -155,6 +283,7 @@ class ChatSessionResponse(BaseModel):
     goal: str | None
     preferred_style: str
     learning_session_id: str | None
+    navigation_context: dict
     created_at: datetime
     updated_at: datetime
 
@@ -163,6 +292,103 @@ class CodeSelection(BaseModel):
     file_id: str
     start_line: int = Field(ge=1)
     end_line: int = Field(ge=1)
+
+
+CodeExplanationDepth = Literal["minimum", "behavior", "syntax", "analogy", "change"]
+
+
+class CodeExplanationCreate(BaseModel):
+    selection: CodeSelection
+    feature_flow_id: str | None = Field(default=None, max_length=100)
+    flow_step_id: str | None = Field(default=None, max_length=100)
+    depth: CodeExplanationDepth = "minimum"
+
+
+class CodeExplanationEvidence(BaseModel):
+    file_id: str
+    path: str
+    start_line: int = Field(ge=1)
+    end_line: int = Field(ge=1)
+    reason: str
+
+
+class CodeExplanationRelatedStep(BaseModel):
+    relation_type: str
+    title: str
+    target: str
+    confidence: ProjectMapConfidence
+    evidence: CodeExplanationEvidence
+
+
+class CodeExplanationSyntaxSegment(BaseModel):
+    node_type: str
+    start_line: int = Field(ge=1)
+    end_line: int = Field(ge=1)
+    explanation: str
+
+
+class CodeExplanationResponse(BaseModel):
+    id: str
+    snapshot_id: str
+    analysis_version: str
+    depth: CodeExplanationDepth
+    selection: CodeSelection
+    purpose: str
+    executes_when: str
+    input: str
+    output_or_side_effect: str
+    project_role: str
+    change_impact: str
+    required_concepts: list[str]
+    related_steps: list[CodeExplanationRelatedStep]
+    syntax_segments: list[CodeExplanationSyntaxSegment]
+    analogy: str | None = None
+    confidence: ProjectMapConfidence
+    evidence: list[CodeExplanationEvidence] = Field(min_length=1)
+    limitations: list[str]
+
+
+class NavigationContext(BaseModel):
+    feature_key: str | None = Field(default=None, max_length=100)
+    flow_step_id: str | None = Field(default=None, max_length=100)
+    selection: CodeSelection | None = None
+    explanation_depth: CodeExplanationDepth | None = None
+
+
+ChangeBriefRisk = Literal["low", "medium", "high", "unknown"]
+
+
+class ChangeBriefCandidateLocation(BaseModel):
+    title: str
+    reason: str
+    confidence: ProjectMapConfidence
+    evidence: CodeExplanationEvidence
+
+
+class ChangeBriefImpact(BaseModel):
+    title: str
+    description: str
+    relation_type: str
+    confidence: ProjectMapConfidence
+    evidence: list[CodeExplanationEvidence] = Field(min_length=1)
+
+
+class ChangeBriefResponse(BaseModel):
+    id: str
+    snapshot_id: str
+    analysis_version: str
+    request_summary: str
+    selection: CodeSelection
+    candidate_locations: list[ChangeBriefCandidateLocation] = Field(min_length=1)
+    confirmed_direct_impacts: list[ChangeBriefImpact]
+    possible_impacts_to_verify: list[ChangeBriefImpact]
+    unknown_boundaries: list[str] = Field(min_length=1)
+    risk_level: ChangeBriefRisk
+    risk_rationale: str
+    verification_steps: list[str] = Field(min_length=1)
+    rollback_guidance: list[str] = Field(min_length=1)
+    evidence: list[CodeExplanationEvidence] = Field(min_length=1)
+    limitations: list[str]
 
 
 class ChatMessageCreate(BaseModel):
@@ -212,6 +438,7 @@ class DeepTaskCreate(BaseModel):
     ]
     prompt: str = Field(min_length=2, max_length=4_000)
     selection: CodeSelection | None = None
+    navigation_context: NavigationContext | None = None
     modality: Literal["text", "voice"] = "text"
 
 
@@ -253,7 +480,7 @@ class DeepTaskResponse(BaseModel):
     kind: str
     progress: int = Field(ge=0, le=100)
     message: str
-    result: ChatAnswerResponse | ResearchMaterialsResponse | None = None
+    result: ChatAnswerResponse | ResearchMaterialsResponse | ChangeBriefResponse | None = None
     error: DeepTaskErrorResponse | None = None
 
 

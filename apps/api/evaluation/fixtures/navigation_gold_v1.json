@@ -1,0 +1,32 @@
+{
+  "name": "navigation-flow-v1-baseline",
+  "repository": "example/flow-demo",
+  "features": [
+    {
+      "id": "ask-question",
+      "name": "질문 전송",
+      "minimum_coverage": 1.0,
+      "expected_steps": [
+        { "relation_type": "TRIGGERS", "role": "user_trigger", "path": "src/components/AskForm.tsx" },
+        { "relation_type": "TRIGGERS", "role": "client_handler", "path": "src/components/AskForm.tsx" },
+        { "relation_type": "REQUESTS", "role": "request", "path": "src/components/AskForm.tsx" },
+        { "relation_type": "HANDLED_BY", "role": "server_handler", "path": "src/app/api/ask/route.ts" }
+      ]
+    },
+    {
+      "id": "save-answer",
+      "name": "답변 저장",
+      "minimum_coverage": 1.0,
+      "expected_steps": [
+        { "relation_type": "TRIGGERS", "role": "user_trigger", "path": "src/components/SaveButton.tsx" },
+        { "relation_type": "TRIGGERS", "role": "client_handler", "path": "src/components/SaveButton.tsx" },
+        { "relation_type": "REQUESTS", "role": "request", "path": "src/components/SaveButton.tsx" },
+        { "relation_type": "HANDLED_BY", "role": "server_handler", "path": "src/app/api/save/route.ts" }
+      ]
+    }
+  ],
+  "thresholds": {
+    "feature_recall": 0.6667,
+    "verified_precision": 0.95
+  }
+}

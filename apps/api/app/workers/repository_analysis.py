@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import tarfile
 from collections import defaultdict
@@ -14,6 +15,7 @@ from sqlalchemy.orm import selectinload
 
 from app.ai.embeddings import build_embedder
 from app.analysis.chunking import SymbolSpan, build_file_chunks
+from app.analysis.python import PythonAnalyzer
 from app.analysis.typescript import ParsedEdge, ParseResult, TypeScriptAnalyzer
 from app.core.config import get_settings
 from app.core.db import SessionLocal
@@ -120,6 +122,29 @@ def _extract_archive(archive_path: Path, destination: Path) -> Path:
 
 
 def _resolve_import(source_path: str, target: str, known_paths: set[str]) -> str:
+    if source_path.endswith(".py"):
+        python_target = _resolve_python_import(source_path, target, known_paths)
+        if python_target:
+            return python_target
+    if target.startswith("@/"):
+        suffix = target[2:]
+        matches = [
+            path
+            for path in known_paths
+            if any(
+                path.endswith(candidate)
+                for candidate in (
+                    f"/src/{suffix}.ts",
+                    f"/src/{suffix}.tsx",
+                    f"/src/{suffix}.js",
+                    f"/src/{suffix}.jsx",
+                    f"/src/{suffix}/index.ts",
+                    f"/src/{suffix}/index.tsx",
+                )
+            )
+        ]
+        if len(matches) == 1:
+            return matches[0]
     if not target.startswith("."):
         return target
     source_parent = PurePosixPath(source_path).parent
@@ -142,6 +167,36 @@ def _resolve_import(source_path: str, target: str, known_paths: set[str]) -> str
         if clean in known_paths:
             return clean
     return target
+
+
+def _resolve_python_import(
+    source_path: str,
+    target: str,
+    known_paths: set[str],
+) -> str | None:
+    level = len(target) - len(target.lstrip("."))
+    module = target.lstrip(".")
+    module_parts = [part for part in module.split(".") if part]
+    candidates: list[str] = []
+    if level:
+        base = list(PurePosixPath(source_path).parent.parts)
+        for _ in range(max(0, level - 1)):
+            if base:
+                base.pop()
+        joined = PurePosixPath(*base, *module_parts).as_posix()
+        candidates.extend((f"{joined}.py", f"{joined}/__init__.py"))
+    if module_parts:
+        suffix = "/".join(module_parts)
+        candidates.extend(
+            sorted(
+                path
+                for path in known_paths
+                if path.endswith((f"/{suffix}.py", f"/{suffix}/__init__.py"))
+                or path in {f"{suffix}.py", f"{suffix}/__init__.py"}
+            )
+        )
+    matches = [candidate for candidate in candidates if candidate in known_paths]
+    return matches[0] if len(set(matches)) == 1 else None
 
 
 @dataclass(frozen=True)
@@ -216,6 +271,13 @@ def _normalize_literal_request_path(request_target: str) -> str | None:
     return path
 
 
+def _route_key_path(path: str) -> str:
+    normalized = _normalize_literal_request_path(path) or path
+    normalized = re.sub(r"\{[^/{}]+\}", "{}", normalized)
+    normalized = re.sub(r"\[[^/\[\]]+\]", "{}", normalized)
+    return normalized.rstrip("/") or "/"
+
+
 def _find_next_package_roots(file_contents: dict[str, str]) -> set[str]:
     roots: set[str] = set()
     for path, content in file_contents.items():
@@ -266,12 +328,38 @@ def _build_route_handler_index(
     candidates: dict[tuple[str, str, str], list[_RouteHandler]] = defaultdict(list)
     for file_path, result in parse_results.items():
         package_root = _longest_matching_package_root(file_path, next_package_roots)
-        if package_root is None:
-            continue
-        request_path = _next_route_request_path(file_path)
-        if request_path is None:
-            continue
         for symbol in result.symbols:
+            metadata = symbol.metadata if isinstance(symbol.metadata, dict) else {}
+            if metadata.get("framework") == "fastapi":
+                target_symbol_id = symbol_ids.get(symbol.qualified_name)
+                if not target_symbol_id:
+                    continue
+                methods = {
+                    str(method).upper() for method in metadata.get("http_methods", [])
+                }
+                paths = {
+                    _route_key_path(str(path))
+                    for path in metadata.get("request_paths", [])
+                    if str(path).startswith("/")
+                }
+                for request_path in sorted(paths):
+                    for http_method in sorted(methods):
+                        candidates[("*", request_path, http_method)].append(
+                            _RouteHandler(
+                                package_root="*",
+                                request_path=request_path,
+                                http_method=http_method,
+                                file_path=file_path,
+                                target_symbol_id=target_symbol_id,
+                            )
+                        )
+                continue
+
+            if package_root is None:
+                continue
+            request_path = _next_route_request_path(file_path)
+            if request_path is None:
+                continue
             exported_methods = {
                 name.upper()
                 for name in symbol.exported_names
@@ -283,7 +371,9 @@ def _build_route_handler_index(
             target_symbol_id = symbol_ids.get(symbol.qualified_name)
             if target_symbol_id:
                 for http_method in sorted(exported_methods):
-                    candidates[(package_root, request_path, http_method)].append(
+                    candidates[
+                        (package_root, _route_key_path(request_path), http_method)
+                    ].append(
                         _RouteHandler(
                             package_root=package_root,
                             request_path=request_path,
@@ -323,6 +413,31 @@ def _resolve_local_symbol_id(
     return None
 
 
+def _build_import_binding_index(
+    parse_results: dict[str, ParseResult],
+    known_paths: set[str],
+) -> dict[tuple[str, str], tuple[str, str]]:
+    output: dict[tuple[str, str], tuple[str, str]] = {}
+    for source_path, result in parse_results.items():
+        for edge in result.edges:
+            if edge.relation != "IMPORTS":
+                continue
+            target_path = _resolve_import(source_path, edge.target, known_paths)
+            if target_path not in known_paths:
+                continue
+            bindings = edge.metadata.get("bindings", [])
+            if not isinstance(bindings, list):
+                continue
+            for binding in bindings:
+                if not isinstance(binding, dict) or binding.get("type_only"):
+                    continue
+                local = str(binding.get("local") or "")
+                imported = str(binding.get("imported") or local)
+                if local:
+                    output[(source_path, local)] = (target_path, imported)
+    return output
+
+
 def _resolve_parsed_edge(
     *,
     file_path: str,
@@ -332,6 +447,8 @@ def _resolve_parsed_edge(
     display_symbol_ids: dict[tuple[str, str], str],
     route_handlers: dict[tuple[str, str, str], _RouteHandler],
     next_package_roots: set[str],
+    import_binding_index: dict[tuple[str, str], tuple[str, str]] | None = None,
+    global_display_symbol_ids: dict[str, list[str]] | None = None,
 ) -> list[_ResolvedEdge]:
     target_path = parsed_edge.target
     target_symbol_id = None
@@ -346,8 +463,17 @@ def _resolve_parsed_edge(
     elif parsed_edge.relation == "CALLS":
         short_target = target_path.rsplit(".", 1)[-1]
         target_symbol_id = display_symbol_ids.get((file_path, short_target))
+        if target_symbol_id is None:
+            root_target = target_path.split(".", 1)[0]
+            imported = (import_binding_index or {}).get((file_path, root_target))
+            if imported:
+                imported_file, imported_name = imported
+                target_name = short_target if "." in target_path else imported_name
+                target_symbol_id = display_symbol_ids.get((imported_file, target_name))
+                if target_symbol_id:
+                    metadata["target_file_path"] = imported_file
         metadata["resolution"] = (
-            "same_file_symbol" if target_symbol_id else "syntactic_target_only"
+            "resolved_symbol" if target_symbol_id else "syntactic_target_only"
         )
     elif parsed_edge.relation == "TRIGGERS":
         target_symbol_id = _resolve_local_symbol_id(
@@ -366,18 +492,28 @@ def _resolve_parsed_edge(
             if metadata.get("target_scope") == "local"
             else None
         )
+        request_key_path = _route_key_path(request_path) if request_path else None
         http_method = str(metadata.get("http_method", "GET")).upper()
         source_package_root = _longest_matching_package_root(
             file_path, next_package_roots
         )
-        route_handler = (
-            route_handlers.get((source_package_root, request_path, http_method))
-            if source_package_root is not None and request_path
-            else None
+        route_handler = None
+        if request_key_path:
+            if source_package_root is not None:
+                route_handler = route_handlers.get(
+                    (source_package_root, request_key_path, http_method)
+                )
+            route_handler = route_handler or route_handlers.get(
+                ("*", request_key_path, http_method)
+            )
+        route_resolution = (
+            "exact_fastapi_route"
+            if route_handler and route_handler.package_root == "*"
+            else "exact_next_app_route"
+            if route_handler
+            else "literal_only"
         )
-        metadata["resolution"] = (
-            "exact_next_app_route" if route_handler else "literal_only"
-        )
+        metadata["resolution"] = route_resolution
         request_edge = _ResolvedEdge(
             relation=parsed_edge.relation,
             source_qualified_name=parsed_edge.source_qualified_name,
@@ -396,11 +532,10 @@ def _resolve_parsed_edge(
             "request_path": request_path,
             "route_file_path": route_handler.file_path,
             "package_root": route_handler.package_root,
-            "resolution": "exact_next_app_route",
+            "resolution": route_resolution,
             "derived_from_relation": "REQUESTS",
             "confidence_rationale": (
-                "Literal request path and HTTP method exactly match one static Next.js "
-                "App Router route handler."
+                "Static request path and HTTP method match one repository route handler."
             ),
             "extractor": "repository_semantic_resolver",
         }
@@ -417,6 +552,12 @@ def _resolve_parsed_edge(
                 metadata=handled_by_metadata,
             ),
         ]
+    elif parsed_edge.relation in {"READS", "WRITES"}:
+        model = str(metadata.get("model") or "")
+        matches = (global_display_symbol_ids or {}).get(model, [])
+        if len(matches) == 1:
+            target_symbol_id = matches[0]
+            metadata["resolution"] = "unique_model_symbol"
 
     return [
         _ResolvedEdge(
@@ -472,6 +613,7 @@ def analyze_repository(snapshot_id: str) -> None:
         _set_stage(snapshot_id, "parsing", total=len(source_files))
 
         analyzer = TypeScriptAnalyzer()
+        python_analyzer = PythonAnalyzer()
         parse_results: dict[str, ParseResult] = {}
 
         with SessionLocal() as db:
@@ -506,6 +648,10 @@ def analyze_repository(snapshot_id: str) -> None:
                     parse_results[source_file.path] = analyzer.parse(
                         source_file.path, source_file.content, source_file.language
                     )
+                elif source_file.language == "python":
+                    parse_results[source_file.path] = python_analyzer.parse(
+                        source_file.path, source_file.content
+                    )
                 if index % 50 == 0:
                     job = db.scalar(
                         select(AnalysisJob)
@@ -529,6 +675,7 @@ def analyze_repository(snapshot_id: str) -> None:
 
             symbol_ids: dict[str, str] = {}
             display_symbol_ids: dict[tuple[str, str], str] = {}
+            global_display_symbol_ids: dict[str, list[str]] = defaultdict(list)
             symbols_by_file: dict[str, list[Symbol]] = {}
             for path, result in parse_results.items():
                 file_record = file_records[path]
@@ -548,6 +695,7 @@ def analyze_repository(snapshot_id: str) -> None:
                     db.flush()
                     symbol_ids[parsed.qualified_name] = symbol.id
                     display_symbol_ids[(path, parsed.display_name)] = symbol.id
+                    global_display_symbol_ids[parsed.display_name].append(symbol.id)
                     symbols_by_file.setdefault(path, []).append(symbol)
 
             known_paths = set(file_records)
@@ -556,6 +704,9 @@ def analyze_repository(snapshot_id: str) -> None:
             )
             route_handlers = _build_route_handler_index(
                 parse_results, symbol_ids, next_package_roots
+            )
+            import_binding_index = _build_import_binding_index(
+                parse_results, known_paths
             )
             edge_count = 0
             for path, result in parse_results.items():
@@ -567,6 +718,8 @@ def analyze_repository(snapshot_id: str) -> None:
                         known_paths=known_paths,
                         symbol_ids=symbol_ids,
                         display_symbol_ids=display_symbol_ids,
+                        import_binding_index=import_binding_index,
+                        global_display_symbol_ids=global_display_symbol_ids,
                         route_handlers=route_handlers,
                         next_package_roots=next_package_roots,
                     )

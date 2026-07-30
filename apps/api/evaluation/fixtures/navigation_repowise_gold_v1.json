@@ -1,0 +1,91 @@
+{
+  "name": "RepoWiseAI navigation gold v1",
+  "repository": "leeseungmin1013/RepoWiseAI",
+  "features": [
+    {
+      "id": "create-repository",
+      "name": "저장소 등록과 분석 요청",
+      "minimum_coverage": 1.0,
+      "expected_steps": [
+        {
+          "relation_type": "TRIGGERS",
+          "role": "user_trigger",
+          "path": "apps/web/src/components/RepositoryWorkbench.tsx"
+        },
+        {
+          "relation_type": "TRIGGERS",
+          "role": "client_handler",
+          "path": "apps/web/src/components/RepositoryWorkbench.tsx"
+        },
+        {
+          "relation_type": "REQUESTS",
+          "role": "request",
+          "path": "apps/web/src/lib/api.ts"
+        },
+        {
+          "relation_type": "HANDLED_BY",
+          "role": "server_handler",
+          "path": "apps/api/app/api/repositories.py"
+        },
+        {
+          "relation_type": "USES_EXTERNAL",
+          "role": "external_service",
+          "path": "apps/api/app/queue.py"
+        },
+        {
+          "relation_type": "READS",
+          "role": "storage_read",
+          "path": "apps/api/app/api/repositories.py"
+        }
+      ]
+    },
+    {
+      "id": "learning-submit-state",
+      "name": "학습 응답 제출 상태 갱신",
+      "minimum_coverage": 1.0,
+      "expected_steps": [
+        {
+          "relation_type": "TRIGGERS",
+          "role": "user_trigger",
+          "path": "apps/web/src/components/LearningJourneyPanel.tsx"
+        },
+        {
+          "relation_type": "TRIGGERS",
+          "role": "client_handler",
+          "path": "apps/web/src/components/LearningJourneyPanel.tsx"
+        },
+        {
+          "relation_type": "WRITES",
+          "role": "state_write",
+          "path": "apps/web/src/components/LearningJourneyPanel.tsx"
+        }
+      ]
+    },
+    {
+      "id": "project-map-open-state",
+      "name": "Project Map 열기 상태 갱신",
+      "minimum_coverage": 1.0,
+      "expected_steps": [
+        {
+          "relation_type": "TRIGGERS",
+          "role": "user_trigger",
+          "path": "apps/web/src/components/RepositoryWorkbench.tsx"
+        },
+        {
+          "relation_type": "TRIGGERS",
+          "role": "client_handler",
+          "path": "apps/web/src/components/RepositoryWorkbench.tsx"
+        },
+        {
+          "relation_type": "WRITES",
+          "role": "state_write",
+          "path": "apps/web/src/components/RepositoryWorkbench.tsx"
+        }
+      ]
+    }
+  ],
+  "thresholds": {
+    "feature_recall": 1.0,
+    "verified_precision": 0.95
+  }
+}

@@ -194,7 +194,7 @@ def test_builds_deterministic_verified_trigger_request_route_flow() -> None:
 
     assert first.model_dump() == repeated.model_dump()
     assert first.repository_name == "example/flow-demo"
-    assert first.analysis_version == "feature-flow-v2"
+    assert first.analysis_version == "feature-flow-v3"
     assert len(first.flows) == 1
     summary = first.flows[0]
     assert summary.confidence == "verified"
@@ -558,6 +558,63 @@ def test_every_exposed_step_has_valid_snapshot_evidence() -> None:
             assert 1 <= evidence.start_line <= evidence.end_line <= file.line_count
 
 
+def test_builds_library_api_flow_when_repository_has_no_ui_triggers() -> None:
+    file = _file(
+        "file_library",
+        "index.js",
+        """export async function pMap(input, mapper) {
+  return next(input, mapper);
+}
+function next(input, mapper) {
+  if (!input) throw new TypeError("input");
+  return mapper(input);
+}
+""",
+    )
+    entry = _symbol("sym_pmap", file.id, "pMap", 1, 3)
+    entry.qualified_name = "index.js::pMap"
+    helper = _symbol("sym_next", file.id, "next", 4, 7)
+    helper.qualified_name = "index.js::next"
+    call = _edge(
+        "edge_call",
+        "CALLS",
+        source_file_id=file.id,
+        source_symbol_id=entry.id,
+        target_symbol_id=helper.id,
+        target_path="next",
+        start_line=2,
+        end_line=2,
+        metadata={"resolution": "resolved_symbol"},
+        confidence=0.65,
+    )
+    failure = _edge(
+        "edge_raise",
+        "RAISES",
+        source_file_id=file.id,
+        source_symbol_id=helper.id,
+        target_symbol_id=None,
+        target_path="TypeError",
+        start_line=5,
+        end_line=5,
+        metadata={"failure_kind": "exception"},
+    )
+
+    catalog = build_feature_flows(
+        _snapshot(), [file], [entry, helper], [call, failure]
+    )
+    detail = build_feature_flow(
+        _snapshot(), [file], [entry, helper], [call, failure], catalog.flows[0].id
+    )
+
+    assert catalog.flows[0].title == "pMap public API 실행 흐름"
+    assert detail is not None
+    assert [step.role for step in detail.normal_steps] == [
+        "library_entry",
+        "internal_call",
+    ]
+    assert detail.failure_steps[0].relation_type == "RAISES"
+
+
 class _ScalarResult:
     def __init__(self, values: list[object]) -> None:
         self.values = values
@@ -654,7 +711,7 @@ def test_feature_flow_catalog_cache_skips_all_navigation_context_queries(
         snapshot_id=snapshot.id,
         artifact_type="feature_flow_catalog",
         artifact_key="representative",
-        artifact_version="feature-flow-v2",
+        artifact_version="feature-flow-v3",
         status="ready",
         payload_json=catalog.model_dump(mode="json"),
         generation_metadata={"commit_sha": snapshot.commit_sha},
@@ -669,7 +726,7 @@ def test_feature_flow_catalog_cache_skips_all_navigation_context_queries(
     assert response.status_code == 200
     assert response.json() == catalog.model_dump(mode="json")
     assert response.headers["x-navigation-cache"] == "HIT"
-    assert response.headers["x-navigation-artifact-version"] == "feature-flow-v2"
+    assert response.headers["x-navigation-artifact-version"] == "feature-flow-v3"
     assert db.calls == 0
     assert db.execute_calls == 0
 

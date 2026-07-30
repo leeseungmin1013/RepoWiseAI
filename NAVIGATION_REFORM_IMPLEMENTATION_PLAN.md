@@ -969,19 +969,22 @@ WP-A와 WP-C skeleton은 병렬 작업 가능하다. WP-D는 backend와 frontend
 | Phase 4 structured Change Brief builder·versioned cache | 완료 |
 | Phase 4 Change Brief UI·Code Focus 연계 | 완료 |
 | Phase 4 안전 조건·idempotency·전체 회귀 테스트 | 완료 |
-| 대표 저장소 parser v2 재분석·실제 gold 검수 | 진행 예정 |
+| 대표 저장소 parser v2 재분석·실제 gold 검수 | 완료 |
+| Phase 5 Structure Map·기능 오버레이 | 완료 |
+| Python/FastAPI·DB SDK·failure path·cross-file helper 관계 확장 | 완료 |
+| Architecture diff·PNG/Mermaid export·제한형 AI label | 완료 |
 
 현재 누적 검증 결과:
 
 - API Ruff 통과
-- API pytest `114 passed` (기존 Starlette deprecation warning 1개)
-- Web Vitest `95 passed`
+- API pytest `127 passed` (기존 Starlette deprecation warning 1개)
+- Web Vitest `99 passed`
 - Web TypeScript 검사 통과
 - Web ESLint 통과
 - Next.js production build 통과
 - Alembic migration 적용 및 head `0009_navigation_change_briefs` 확인
 - `git diff --check` 통과
 
-Phase 1~4의 계획된 탐색 vertical slice는 모두 구현됐다. 다음 단계는 대표 저장소를 `semantic-ts-v2`로 다시 분석하고 사람이 검수한 gold로 Project Map·Feature Flow·Code Focus·Change Brief의 recall·precision 기준선을 얻는 운영 검증이다. 현재 DB의 기존 ready snapshot은 구형 `tree-sitter-v1`이므로 새 관계 품질 측정에는 사용할 수 없다. 관계 확장은 실제 gold 누락 결과를 근거로 DB SDK, `Link`, cross-file helper 순서를 결정한다.
+Phase 1~5의 탐색·구조 시각화 vertical slice와 운영 검증을 완료했다. RepoWiseAI와 p-map을 `semantic-ts-v2`로 재분석했고, 사람이 검수한 Architecture 및 Navigation gold에서 두 저장소 모두 목표 임계값을 통과했다. 실측 누락을 근거로 Python/FastAPI, DB SDK read/write, explicit failure path, local fetch wrapper, cross-file helper, library public API 흐름을 확장했다. Change Brief도 RepoWiseAI의 Web→API→queue/model 영향과 p-map의 내부 호출·실패 경로를 실제 snapshot에서 검수했다.
 
 이 문서는 각 tranche 종료 시 실제 구현 파일, 테스트 결과, 남은 위험을 기준으로 갱신한다.

@@ -14,6 +14,7 @@
     "test:api": "uv run --project apps/api pytest -q",
     "eval:retrieval": "uv run --project apps/api python -m app.evaluation.retrieval",
     "eval:navigation": "uv run --project apps/api python -m app.evaluation.navigation",
+    "eval:architecture": "uv run --project apps/api python -m app.evaluation.architecture",
     "db:migrate": "uv run --project apps/api alembic -c apps/api/alembic.ini upgrade head"
   }
 }

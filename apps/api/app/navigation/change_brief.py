@@ -31,7 +31,14 @@ from app.schemas import (
 )
 
 DIRECT_EFFECT_RELATIONS = frozenset(
-    {"REQUESTS", "HANDLED_BY", "WRITES", "NAVIGATES_TO", "USES_EXTERNAL"}
+    {
+        "REQUESTS",
+        "HANDLED_BY",
+        "WRITES",
+        "NAVIGATES_TO",
+        "USES_EXTERNAL",
+        "RAISES",
+    }
 )
 RELATION_TITLE = {
     "TRIGGERS": "사용자 동작 진입점",
@@ -41,6 +48,8 @@ RELATION_TITLE = {
     "WRITES": "상태·데이터 변경",
     "NAVIGATES_TO": "화면 이동",
     "USES_EXTERNAL": "외부 서비스 호출",
+    "CALLS": "호출 관계",
+    "RAISES": "실패·예외 경로",
 }
 
 
@@ -367,6 +376,8 @@ def _impact_description(edge: SymbolEdge, target: str, incoming: bool) -> str:
         "WRITES": "저장 또는 상태 변경 결과와 소비자에 영향을 줄 수 있습니다.",
         "NAVIGATES_TO": "이동 대상과 이동 조건에 영향을 줄 수 있습니다.",
         "USES_EXTERNAL": "외부 서비스 계약·오류 처리·재시도 경계를 확인해야 합니다.",
+        "CALLS": "호출 대상의 입력·출력 계약과 호출 순서를 함께 확인해야 합니다.",
+        "RAISES": "실패 조건, 예외 유형, 호출자의 복구 동작에 영향을 줄 수 있습니다.",
     }.get(edge.relation, "연결된 코드 계약을 함께 확인해야 합니다.")
     return f"{target}: {copy}"
 
@@ -379,7 +390,12 @@ def _risk(
     file_count = len({item.evidence.file_id for item in candidates})
     if relations & {"WRITES", "USES_EXTERNAL"}:
         return "high", "저장 상태 또는 외부 서비스 경계를 건드리는 검증된 관계가 있습니다."
-    if file_count > 1 or relations & {"REQUESTS", "HANDLED_BY", "NAVIGATES_TO"}:
+    if file_count > 1 or relations & {
+        "REQUESTS",
+        "HANDLED_BY",
+        "NAVIGATES_TO",
+        "RAISES",
+    }:
         return "medium", "둘 이상의 코드 경계 또는 요청·이동 계약을 함께 확인해야 합니다."
     if edges:
         return "low", "현재 정적 근거에서는 영향이 선택 범위 주변에 집중되어 있습니다."
@@ -395,6 +411,8 @@ def _unknown_boundaries(edges: Sequence[SymbolEdge]) -> list[str]:
         items.append("기존 데이터와 마이그레이션이 필요한 저장소 계약")
     if "REQUESTS" in relations or "HANDLED_BY" in relations:
         items.append("정적 분석으로 찾지 못한 API 소비자와 배포 중인 이전 클라이언트")
+    if "RAISES" in relations:
+        items.append("호출자가 예외를 변환·재시도·복구하는 런타임 실패 경계")
     items.append("환경 변수, 배포 설정, feature flag에 따른 동작 차이")
     return items
 
@@ -410,6 +428,8 @@ def _verification_steps(edges: Sequence[SymbolEdge], path: str) -> list[str]:
         steps.append("이동 조건과 목적 화면을 포함한 사용자 흐름을 확인합니다.")
     if "USES_EXTERNAL" in relations:
         steps.append("외부 서비스 성공·오류·timeout 응답에 대한 통합 경계를 확인합니다.")
+    if "RAISES" in relations:
+        steps.append("각 예외 조건과 호출자의 catch·복구·재시도 동작을 검증합니다.")
     steps.append("후보 위치별 관련 테스트를 실행하고 미확인 경계를 수동 점검합니다.")
     return steps
 

@@ -47,6 +47,10 @@ RepoWise AI는 GitHub 코드베이스를 실제 코드 근거와 검증된 학�
 - 보충 학습 return stack과 원래 lesson 복귀
 - 현재 module·lesson·concept를 검색 query와 OpenAI Structured Output prompt에 주입
 - 데스크톱·모바일 반응형 작업공간
+- Project Map 안에서 Client·Server·Domain·Data 경계를 보여 주는 bounded Repository Structure Map
+- 기능별 정상·실패 흐름 오버레이, 코드 근거 이동, Change Brief 영향 강조
+- Python/FastAPI·DB SDK·cross-file request helper를 포함한 `semantic-ts-v2` 관계 분석
+- Architecture gold 평가 CLI, commit 구조 diff, PNG·Mermaid export
 
 다음 vertical slice는 공식 문서 freshness 검증, 최근 질문·활동·보충 경로 복구, 학습 품질 평가 fixture와 운영 관측성 강화에 집중합니다. 기존 Guided Code Tour API는 호환성을 위해 유지하지만 기본 UI는 Adaptive Learning Journey를 사용합니다.
 

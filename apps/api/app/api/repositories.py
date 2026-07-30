@@ -3,12 +3,21 @@ from collections import Counter
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi.responses import PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session, load_only, selectinload
 
 from app.analysis.tree import build_file_tree
+from app.core.config import get_settings
 from app.core.db import get_db
 from app.models import AnalysisJob, FileRecord, Repository, RepositorySnapshot, Symbol, SymbolEdge
+from app.navigation.architecture_diff import (
+    architecture_graph_to_mermaid,
+    diff_architecture_graphs,
+)
+from app.navigation.architecture_graph import IMPORTANT_RELATIONS, build_architecture_graph
+from app.navigation.architecture_labels import enhance_architecture_graph_labels
+from app.navigation.architecture_validation import validate_architecture_graph
 from app.navigation.artifacts import (
     ArtifactWrite,
     load_navigation_artifact,
@@ -18,6 +27,8 @@ from app.navigation.code_focus import SEMANTIC_FOCUS_RELATIONS, build_code_expla
 from app.navigation.feature_flow import build_feature_flow, build_feature_flows
 from app.navigation.project_map import build_project_map
 from app.navigation.versions import (
+    ARCHITECTURE_GRAPH_VERSION,
+    ARCHITECTURE_LABEL_VERSION,
     CODE_EXPLANATION_VERSION,
     FEATURE_FLOW_VERSION,
     PROJECT_MAP_VERSION,
@@ -25,6 +36,8 @@ from app.navigation.versions import (
 from app.queue import enqueue_repository_analysis
 from app.schemas import (
     AnalysisJobResponse,
+    ArchitectureGraphDiffResponse,
+    ArchitectureGraphResponse,
     CodeExplanationCreate,
     CodeExplanationResponse,
     EntryPoint,
@@ -46,6 +59,7 @@ from app.schemas import (
 from app.services.github import parse_github_url
 
 router = APIRouter(tags=["repositories"])
+settings = get_settings()
 SessionDep = Annotated[Session, Depends(get_db)]
 SnapshotLimit = Annotated[int, Query(ge=1, le=50)]
 SymbolLimit = Annotated[int, Query(ge=1, le=500)]
@@ -240,6 +254,232 @@ def get_graph(snapshot_id: str, db: SessionDep):
     return GraphResponse(nodes=list(graph_nodes.values()), edges=graph_edges)
 
 
+@router.get(
+    "/snapshots/{snapshot_id}/architecture-graph",
+    response_model=ArchitectureGraphResponse,
+)
+def get_architecture_graph(
+    snapshot_id: str,
+    response: Response,
+    db: SessionDep,
+    feature_flow_id: str | None = None,
+):
+    if not settings.navigation_architecture_graph_enabled:
+        raise HTTPException(status_code=404, detail="Architecture graph is disabled")
+    snapshot = load_snapshot(db, snapshot_id)
+    require_ready(snapshot)
+    if snapshot.parser_version != "semantic-ts-v2":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Architecture graph requires a semantic-ts-v2 repository analysis",
+        )
+    commit_sha = snapshot.commit_sha or ""
+    cached = load_navigation_artifact(
+        db,
+        snapshot_id=snapshot_id,
+        artifact_type="architecture_graph",
+        artifact_key="overview",
+        artifact_version=ARCHITECTURE_GRAPH_VERSION,
+        payload_model=ArchitectureGraphResponse,
+        commit_sha=commit_sha,
+    )
+    if cached is not None and cached.snapshot_id == snapshot_id:
+        if feature_flow_id and not any(
+            feature_flow_id in node.feature_flow_ids for node in cached.nodes
+        ):
+            raise HTTPException(
+                status_code=404,
+                detail="Feature flow not found in architecture graph",
+            )
+        response.headers["X-Navigation-Cache"] = "HIT"
+        response.headers["X-Navigation-Artifact-Version"] = ARCHITECTURE_GRAPH_VERSION
+        return cached
+
+    files = db.scalars(
+        select(FileRecord).where(FileRecord.snapshot_id == snapshot_id).order_by(FileRecord.path)
+    ).all()
+    symbols = db.scalars(
+        select(Symbol)
+        .where(Symbol.snapshot_id == snapshot_id)
+        .order_by(Symbol.file_id, Symbol.start_line)
+    ).all()
+    semantic_edges = db.scalars(
+        select(SymbolEdge).where(
+            SymbolEdge.snapshot_id == snapshot_id,
+            SymbolEdge.relation.in_(IMPORTANT_RELATIONS),
+        )
+    ).all()
+    import_edges = [edge for edge in semantic_edges if edge.relation == "IMPORTS"]
+    project_map = build_project_map(snapshot, files, import_edges)
+    catalog = build_feature_flows(snapshot, files, symbols, semantic_edges)
+    feature_flows = [
+        detail
+        for summary in catalog.flows
+        if (detail := build_feature_flow(snapshot, files, symbols, semantic_edges, summary.id))
+        is not None
+    ]
+    if feature_flow_id and not any(flow.id == feature_flow_id for flow in feature_flows):
+        raise HTTPException(status_code=404, detail="Feature flow not found")
+
+    graph = build_architecture_graph(
+        snapshot,
+        files,
+        symbols,
+        semantic_edges,
+        project_map,
+        feature_flows,
+    )
+    validation = validate_architecture_graph(
+        graph,
+        files=list(files),
+        project_map=project_map,
+        feature_flows=feature_flows,
+    )
+    if not validation.valid:
+        graph = graph.model_copy(
+            update={
+                "limitations": [
+                    *graph.limitations,
+                    *[f"구조도 검증: {issue}" for issue in validation.issues],
+                ]
+            }
+        )
+    stored = write_navigation_artifacts(
+        db,
+        snapshot_id=snapshot_id,
+        commit_sha=commit_sha,
+        artifacts=[
+            ArtifactWrite(
+                artifact_type="architecture_graph",
+                artifact_key="overview",
+                artifact_version=ARCHITECTURE_GRAPH_VERSION,
+                payload=graph,
+                generation_metadata={
+                    "semantic_graph_version": snapshot.parser_version,
+                    "project_map_version": PROJECT_MAP_VERSION,
+                    "feature_flow_version": FEATURE_FLOW_VERSION,
+                    "validation_valid": validation.valid,
+                    "flow_mapping_coverage": validation.flow_mapping_coverage,
+                },
+            )
+        ],
+    )
+    response.headers["X-Navigation-Cache"] = "MISS"
+    response.headers["X-Navigation-Cache-Write"] = "STORED" if stored else "SKIPPED"
+    response.headers["X-Navigation-Artifact-Version"] = ARCHITECTURE_GRAPH_VERSION
+    return graph
+
+
+@router.get(
+    "/snapshots/{snapshot_id}/architecture-graph/mermaid",
+    response_class=PlainTextResponse,
+)
+def export_architecture_graph_mermaid(snapshot_id: str, db: SessionDep):
+    graph = get_architecture_graph(snapshot_id, Response(), db)
+    return PlainTextResponse(
+        architecture_graph_to_mermaid(graph),
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{snapshot_id}-architecture.mmd"'
+            )
+        },
+    )
+
+
+@router.get(
+    "/snapshots/{snapshot_id}/architecture-graph/diff",
+    response_model=ArchitectureGraphDiffResponse,
+)
+def get_architecture_graph_diff(
+    snapshot_id: str,
+    base_snapshot_id: str,
+    db: SessionDep,
+):
+    target_snapshot = load_snapshot(db, snapshot_id)
+    base_snapshot = load_snapshot(db, base_snapshot_id)
+    require_ready(target_snapshot)
+    require_ready(base_snapshot)
+    if target_snapshot.repository_id != base_snapshot.repository_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Architecture diff snapshots must belong to the same repository",
+        )
+    if {
+        target_snapshot.parser_version,
+        base_snapshot.parser_version,
+    } != {"semantic-ts-v2"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Architecture diff requires semantic-ts-v2 snapshots",
+        )
+    target_graph = get_architecture_graph(snapshot_id, Response(), db)
+    base_graph = get_architecture_graph(base_snapshot_id, Response(), db)
+    return diff_architecture_graphs(base_graph, target_graph)
+
+
+@router.post(
+    "/snapshots/{snapshot_id}/architecture-graph/enhance-labels",
+    response_model=ArchitectureGraphResponse,
+)
+def enhance_architecture_graph(
+    snapshot_id: str,
+    response: Response,
+    db: SessionDep,
+):
+    if not settings.navigation_llm_labels_enabled:
+        raise HTTPException(
+            status_code=404,
+            detail="Architecture label enhancement is disabled",
+        )
+    snapshot = load_snapshot(db, snapshot_id)
+    require_ready(snapshot)
+    commit_sha = snapshot.commit_sha or ""
+    cached = load_navigation_artifact(
+        db,
+        snapshot_id=snapshot_id,
+        artifact_type="architecture_graph_labels",
+        artifact_key="overview",
+        artifact_version=ARCHITECTURE_LABEL_VERSION,
+        payload_model=ArchitectureGraphResponse,
+        commit_sha=commit_sha,
+    )
+    if cached is not None:
+        response.headers["X-Navigation-Cache"] = "HIT"
+        response.headers["X-Navigation-Artifact-Version"] = ARCHITECTURE_LABEL_VERSION
+        return cached
+    graph = get_architecture_graph(snapshot_id, Response(), db)
+    try:
+        enhanced = enhance_architecture_graph_labels(graph, settings)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Architecture label enhancement is unavailable",
+        ) from exc
+    stored = write_navigation_artifacts(
+        db,
+        snapshot_id=snapshot_id,
+        commit_sha=commit_sha,
+        artifacts=[
+            ArtifactWrite(
+                artifact_type="architecture_graph_labels",
+                artifact_key="overview",
+                artifact_version=ARCHITECTURE_LABEL_VERSION,
+                payload=enhanced,
+                generation_metadata={
+                    "base_architecture_version": ARCHITECTURE_GRAPH_VERSION,
+                    "model": settings.generation_model,
+                    "constrained_node_ids": True,
+                },
+            )
+        ],
+    )
+    response.headers["X-Navigation-Cache"] = "MISS"
+    response.headers["X-Navigation-Cache-Write"] = "STORED" if stored else "SKIPPED"
+    response.headers["X-Navigation-Artifact-Version"] = ARCHITECTURE_LABEL_VERSION
+    return enhanced
+
+
 @router.get("/snapshots/{snapshot_id}/project-map", response_model=ProjectMapResponse)
 def get_project_map(snapshot_id: str, response: Response, db: SessionDep):
     snapshot = load_snapshot(db, snapshot_id)
@@ -304,6 +544,7 @@ def load_feature_flow_context(snapshot_id: str, db: Session):
                 Symbol.file_id,
                 Symbol.qualified_name,
                 Symbol.display_name,
+                Symbol.kind,
                 Symbol.start_line,
                 Symbol.end_line,
             )
@@ -323,6 +564,8 @@ def load_feature_flow_context(snapshot_id: str, db: Session):
                     "WRITES",
                     "NAVIGATES_TO",
                     "USES_EXTERNAL",
+                    "CALLS",
+                    "RAISES",
                 )
             ),
         )
@@ -374,9 +617,7 @@ def get_feature_flows(snapshot_id: str, response: Response, db: SessionDep):
         )
     ]
     for summary in catalog.flows:
-        detail = build_feature_flow(
-            snapshot, files, symbols, semantic_edges, summary.id
-        )
+        detail = build_feature_flow(snapshot, files, symbols, semantic_edges, summary.id)
         if detail is not None:
             writes.append(
                 ArtifactWrite(
@@ -384,9 +625,7 @@ def get_feature_flows(snapshot_id: str, response: Response, db: SessionDep):
                     artifact_key=summary.id,
                     artifact_version=FEATURE_FLOW_VERSION,
                     payload=detail,
-                    generation_metadata={
-                        "semantic_graph_version": snapshot.parser_version
-                    },
+                    generation_metadata={"semantic_graph_version": snapshot.parser_version},
                 )
             )
     stored = write_navigation_artifacts(
@@ -490,11 +729,7 @@ def create_code_explanation(
         payload_model=CodeExplanationResponse,
         commit_sha=commit_sha,
     )
-    if (
-        cached is not None
-        and cached.snapshot_id == snapshot_id
-        and cached.selection == selection
-    ):
+    if cached is not None and cached.snapshot_id == snapshot_id and cached.selection == selection:
         response.headers["X-Navigation-Cache"] = "HIT"
         response.headers["X-Navigation-Artifact-Version"] = CODE_EXPLANATION_VERSION
         return cached

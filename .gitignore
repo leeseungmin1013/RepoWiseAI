@@ -16,6 +16,7 @@ htmlcov/
 
 # Node / frontend build output
 node_modules/
+.pnpm-store/
 .next/
 dist/
 build/

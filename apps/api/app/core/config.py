@@ -55,6 +55,8 @@ class Settings(BaseSettings):
     max_file_bytes: int = 1024 * 1024
     max_archive_bytes: int = 50 * 1024 * 1024
     analysis_job_timeout_seconds: int = 600
+    navigation_architecture_graph_enabled: bool = True
+    navigation_llm_labels_enabled: bool = False
 
     model_config = SettingsConfigDict(
         env_file=(REPOSITORY_ROOT / ".env", REPOSITORY_ROOT / "apps" / "api" / ".env"),

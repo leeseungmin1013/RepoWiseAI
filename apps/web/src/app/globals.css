@@ -1640,6 +1640,45 @@ button:disabled {
   background: #f8fafb;
 }
 
+.map-workspace {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.map-view-switcher {
+  display: flex;
+  width: fit-content;
+  gap: 4px;
+  border: 1px solid var(--border, #d5dde1);
+  border-radius: 8px;
+  background: var(--surface-muted, #f6f8f9);
+  margin: 14px 18px 0;
+  padding: 3px;
+}
+
+.map-view-switcher button {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted, #68757d);
+  font-size: 10px;
+  font-weight: 750;
+  padding: 0 12px;
+}
+
+.map-view-switcher button.is-active {
+  background: var(--surface, #fff);
+  box-shadow: 0 1px 3px rgba(24, 34, 41, 0.1);
+  color: var(--teal-dark, #05685f);
+}
+
 .react-flow__controls {
   overflow: hidden;
   border: 1px solid var(--border) !important;

@@ -26,6 +26,8 @@ SEMANTIC_FOCUS_RELATIONS = frozenset(
         "WRITES",
         "NAVIGATES_TO",
         "USES_EXTERNAL",
+        "CALLS",
+        "RAISES",
     }
 )
 RELATION_COPY = {
@@ -36,6 +38,8 @@ RELATION_COPY = {
     "WRITES": "상태 또는 저장값을 바꿉니다",
     "NAVIGATES_TO": "다른 화면으로 이동합니다",
     "USES_EXTERNAL": "외부 서비스를 사용합니다",
+    "CALLS": "연결된 함수나 서비스를 호출합니다",
+    "RAISES": "명시적인 실패 조건에서 예외를 발생시킵니다",
 }
 ROLE_COPY = {
     "user_trigger": "사용자 행동이 시작되는 화면 경계",

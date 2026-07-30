@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   createRepository: vi.fn(),
   createLearnerProfile: vi.fn(),
   getProjectMap: vi.fn(),
+  getArchitectureGraph: vi.fn(),
   getFeatureFlows: vi.fn(),
   getFeatureFlow: vi.fn(),
   createCodeExplanation: vi.fn(),
@@ -30,6 +31,7 @@ vi.mock("@/lib/api", () => ({
     createRepository: mocks.createRepository,
     createLearnerProfile: mocks.createLearnerProfile,
     getProjectMap: mocks.getProjectMap,
+    getArchitectureGraph: mocks.getArchitectureGraph,
     getFeatureFlows: mocks.getFeatureFlows,
     getFeatureFlow: mocks.getFeatureFlow,
     createCodeExplanation: mocks.createCodeExplanation,
@@ -73,6 +75,14 @@ vi.mock("@/lib/deep-tasks", () => ({
 
 vi.mock("./AssistantPanel", () => ({
   AssistantPanel: () => <div>학습 패널</div>,
+}));
+
+vi.mock("./ArchitectureMapPanel", () => ({
+  ArchitectureMapPanel: ({ graph, loading }: { graph: { snapshot_id: string } | null; loading: boolean }) => (
+    <div data-testid="architecture-map">
+      {loading ? "loading" : graph?.snapshot_id ?? "empty"}
+    </div>
+  ),
 }));
 
 vi.mock("./CodePanel", () => ({
@@ -263,7 +273,7 @@ const featureFlowCatalog = {
   repository_name: projectMap.repository_name,
   snapshot_id: snapshot.id,
   commit_sha: snapshot.commit_sha,
-  analysis_version: "feature-flow-v2",
+  analysis_version: "feature-flow-v3",
   flows: [
     {
       id: "flow-project-map",
@@ -375,6 +385,17 @@ beforeEach(() => {
   });
   mocks.createLearnerProfile.mockResolvedValue(profile);
   mocks.getProjectMap.mockResolvedValue(projectMap);
+  mocks.getArchitectureGraph.mockResolvedValue({
+    repository_name: "example/repository",
+    snapshot_id: snapshot.id,
+    commit_sha: snapshot.commit_sha,
+    analysis_version: "architecture-graph-v2",
+    summary: "structure",
+    groups: [],
+    nodes: [],
+    edges: [],
+    limitations: [],
+  });
   mocks.getFeatureFlows.mockResolvedValue(featureFlowCatalog);
   mocks.getFeatureFlow.mockResolvedValue(featureFlowDetail);
   mocks.createCodeExplanation.mockResolvedValue(codeExplanation);
@@ -421,6 +442,20 @@ describe("RepositoryWorkbench map-first entry", () => {
     expect(mocks.getGraph).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "프로젝트 지도" }).getAttribute("aria-pressed"))
       .toBe("true");
+  });
+
+  it("loads the architecture graph only when the user opens the structure view", async () => {
+    render(<RepositoryWorkbench />);
+    await waitFor(() => expect(mocks.getProjectMap).toHaveBeenCalledWith(snapshot.id));
+
+    expect(mocks.getArchitectureGraph).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "구조도" }));
+
+    await waitFor(() => expect(mocks.getArchitectureGraph).toHaveBeenCalledWith(snapshot.id));
+    expect(screen.getByTestId("architecture-map").textContent).toBe(snapshot.id);
+    expect(mocks.getFeatureFlows).toHaveBeenCalledWith(snapshot.id);
+    expect(mocks.getTree).not.toHaveBeenCalled();
+    expect(mocks.getGraph).not.toHaveBeenCalled();
   });
 
   it("loads flow catalog and detail without assessment or explorer, then opens exact evidence", async () => {

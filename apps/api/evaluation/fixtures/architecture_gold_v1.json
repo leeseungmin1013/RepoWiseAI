@@ -1,0 +1,119 @@
+{
+  "name": "RepoWiseAI architecture gold v1",
+  "repository": "leeseungmin1013/RepoWiseAI",
+  "nodes": [
+    {
+      "id": "web-workbench",
+      "evidence_paths": ["apps/web/src/components/RepositoryWorkbench.tsx"]
+    },
+    {
+      "id": "web-api-client",
+      "evidence_paths": ["apps/web/src/lib/api.ts"]
+    },
+    {
+      "id": "learning-ui",
+      "evidence_paths": ["apps/web/src/components/LearningJourneyPanel.tsx"]
+    },
+    {
+      "id": "repository-api",
+      "evidence_paths": ["apps/api/app/api/repositories.py"]
+    },
+    {
+      "id": "learning-api",
+      "evidence_paths": ["apps/api/app/api/learning.py"]
+    },
+    {
+      "id": "analysis-worker",
+      "evidence_paths": ["apps/api/app/workers/repository_analysis.py"]
+    },
+    {
+      "id": "analysis-engine",
+      "evidence_paths": ["apps/api/app/analysis/typescript.py"]
+    },
+    {
+      "id": "feature-flow",
+      "evidence_paths": ["apps/api/app/navigation/feature_flow.py"]
+    },
+    {
+      "id": "project-map",
+      "evidence_paths": ["apps/api/app/navigation/project_map.py"]
+    },
+    {
+      "id": "data-models",
+      "evidence_paths": ["apps/api/app/models.py"]
+    },
+    {
+      "id": "queue",
+      "evidence_paths": ["apps/api/app/queue.py"]
+    },
+    {
+      "id": "github-boundary",
+      "evidence_paths": ["apps/api/app/services/github.py"]
+    }
+  ],
+  "edges": [
+    {
+      "source_path": "apps/web/src/components/RepositoryWorkbench.tsx",
+      "target_path": "apps/web/src/lib/api.ts",
+      "relation": "CALLS"
+    },
+    {
+      "source_path": "apps/web/src/lib/api.ts",
+      "target_path": "apps/api/app/api/repositories.py",
+      "relation": "HANDLED_BY"
+    },
+    {
+      "source_path": "apps/api/app/api/repositories.py",
+      "target_path": "apps/api/app/queue.py",
+      "relation": "CALLS"
+    },
+    {
+      "source_path": "apps/api/app/api/repositories.py",
+      "target_path": "apps/api/app/models.py",
+      "relation": "READS"
+    },
+    {
+      "source_path": "apps/api/app/workers/repository_analysis.py",
+      "target_path": "apps/api/app/models.py",
+      "relation": "WRITES"
+    },
+    {
+      "source_path": "apps/api/app/workers/repository_analysis.py",
+      "target_path": "apps/api/app/services/github.py",
+      "relation": "CALLS"
+    },
+    {
+      "source_path": "apps/api/app/api/repositories.py",
+      "target_path": "apps/api/app/navigation/feature_flow.py",
+      "relation": "CALLS"
+    },
+    {
+      "source_path": "apps/api/app/navigation/feature_flow.py",
+      "target_path": "apps/api/app/models.py",
+      "relation": "IMPORTS"
+    }
+  ],
+  "flows": [
+    {
+      "flow_id": "flow_3fff486f04a879592c01",
+      "evidence_paths": [
+        "apps/web/src/components/RepositoryWorkbench.tsx",
+        "apps/web/src/lib/api.ts",
+        "apps/api/app/api/repositories.py"
+      ]
+    }
+  ],
+  "noise_paths": [
+    "apps/web/eslint.config.mjs",
+    "scripts/generate_project_plan_pdf.py"
+  ],
+  "thresholds": {
+    "architecture_node_recall": 0.8,
+    "verified_node_precision": 0.95,
+    "required_edge_recall": 0.75,
+    "feature_mapping_coverage": 0.85,
+    "noise_ratio": 0.15,
+    "evidence_validity": 1.0,
+    "graph_size_compliance": 1.0
+  }
+}

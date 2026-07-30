@@ -120,6 +120,94 @@ class GraphResponse(BaseModel):
     edges: list[GraphEdge]
 
 
+ArchitectureConfidence = Literal["verified", "inferred", "unknown"]
+ArchitectureLayer = Literal[
+    "client", "server", "domain", "data", "external", "configuration", "shared"
+]
+
+
+class ArchitectureGraphEvidence(BaseModel):
+    file_id: str
+    path: str
+    start_line: int = Field(ge=1)
+    end_line: int = Field(ge=1)
+    reason: str
+
+
+class ArchitectureGraphGroup(BaseModel):
+    id: str
+    label: str
+    description: str
+    layer: ArchitectureLayer
+    confidence: ArchitectureConfidence
+    evidence: list[ArchitectureGraphEvidence]
+
+
+class ArchitectureGraphNode(BaseModel):
+    id: str
+    label: str
+    responsibility: str
+    node_type: str
+    group_id: str | None = None
+    confidence: ArchitectureConfidence
+    inputs: list[str]
+    outputs: list[str]
+    capability_ids: list[str]
+    feature_flow_ids: list[str]
+    evidence: list[ArchitectureGraphEvidence] = Field(min_length=1)
+
+
+class ArchitectureGraphEdge(BaseModel):
+    id: str
+    source: str
+    target: str
+    relation: str
+    label: str
+    description: str
+    confidence: ArchitectureConfidence
+    feature_flow_ids: list[str]
+    evidence: list[ArchitectureGraphEvidence] = Field(min_length=1)
+
+
+class ArchitectureGraphResponse(BaseModel):
+    repository_name: str
+    snapshot_id: str
+    commit_sha: str
+    analysis_version: str
+    summary: str
+    groups: list[ArchitectureGraphGroup] = Field(max_length=8)
+    nodes: list[ArchitectureGraphNode] = Field(max_length=34)
+    edges: list[ArchitectureGraphEdge] = Field(max_length=48)
+    limitations: list[str]
+
+
+class ArchitectureGraphDiffNode(BaseModel):
+    path: str
+    status: Literal["added", "removed", "changed"]
+    before_label: str | None = None
+    after_label: str | None = None
+    before_responsibility: str | None = None
+    after_responsibility: str | None = None
+
+
+class ArchitectureGraphDiffEdge(BaseModel):
+    source_path: str
+    target_path: str
+    relation: str
+    status: Literal["added", "removed"]
+
+
+class ArchitectureGraphDiffResponse(BaseModel):
+    repository_name: str
+    base_snapshot_id: str
+    target_snapshot_id: str
+    base_commit_sha: str
+    target_commit_sha: str
+    nodes: list[ArchitectureGraphDiffNode]
+    edges: list[ArchitectureGraphDiffEdge]
+    summary: dict[str, int]
+
+
 class EntryPoint(BaseModel):
     file_id: str
     path: str

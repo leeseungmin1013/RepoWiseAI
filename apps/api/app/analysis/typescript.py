@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
@@ -53,6 +54,7 @@ class ParsedSymbol:
     end_line: int
     content_hash: str
     exported_names: tuple[str, ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -227,10 +229,43 @@ class TypeScriptAnalyzer:
                         external_clients=external_clients,
                     )
                 )
+            elif node.type == "throw_statement":
+                expression = next(iter(node.named_children), None)
+                target = self._throw_target(expression, source)
+                edges.append(
+                    ParsedEdge(
+                        relation="RAISES",
+                        source_qualified_name=current_qualified_name,
+                        target=target,
+                        confidence=1.0,
+                        start_line=node.start_point.row + 1,
+                        end_line=node.end_point.row + 1,
+                        metadata={
+                            "failure_kind": "exception",
+                            "extractor": "tree_sitter_typescript",
+                            "confidence_rationale": (
+                                "Explicit JavaScript or TypeScript throw statement."
+                            ),
+                        },
+                    )
+                )
 
             stack.extend((child, current_qualified_name) for child in reversed(node.children))
 
         return ParseResult(symbols=symbols, edges=edges)
+
+    def _throw_target(self, node: Node | None, source: bytes) -> str:
+        if node is None:
+            return "exception"
+        if node.type == "new_expression":
+            constructor = node.child_by_field_name("constructor")
+            if constructor is not None:
+                value = self._text(constructor, source).strip()
+                if value:
+                    return value[:200]
+        value = self._text(node, source).strip()
+        match = re.match(r"(?:new\s+)?([A-Za-z_$][\w$]*)", value)
+        return match.group(1)[:200] if match else "exception"
 
     def _symbol_from_node(
         self,
@@ -252,6 +287,17 @@ class TypeScriptAnalyzer:
                 return None
             is_component = name_node and self._text(name_node, source)[:1].isupper()
             kind = "component" if is_component else "function"
+        elif node.type == "pair":
+            name_node = node.child_by_field_name("key")
+            value_node = node.child_by_field_name("value")
+            if (
+                name_node is None
+                or name_node.type == "computed_property_name"
+                or value_node is None
+                or value_node.type not in {"arrow_function", "function_expression"}
+            ):
+                return None
+            kind = "function"
 
         if not kind or name_node is None:
             return None
@@ -415,7 +461,26 @@ class TypeScriptAnalyzer:
                 for record in import_records
             ):
                 clients[local] = ("axios", "import:axios")
+        if "fetch" in clients:
+            for wrapper in self._local_fetch_wrappers(root, source):
+                clients[wrapper] = ("fetch-wrapper", "local:fetch-wrapper")
         return clients
+
+    def _local_fetch_wrappers(self, root: Node, source: bytes) -> set[str]:
+        wrappers: set[str] = set()
+        stack = list(reversed(root.named_children))
+        while stack:
+            node = stack.pop()
+            if node.type == "function_declaration":
+                name_node = node.child_by_field_name("name")
+                body_node = node.child_by_field_name("body")
+                if name_node is not None and body_node is not None:
+                    body_text = self._text(body_node, source)
+                    if re.search(r"\bfetch\s*\(", body_text):
+                        wrappers.add(self._text(name_node, source).strip())
+                continue
+            stack.extend(reversed(node.named_children))
+        return {name for name in wrappers if name}
 
     def _bound_identifiers(self, node: Node, source: bytes) -> set[str]:
         names: set[str] = set()
@@ -1064,7 +1129,7 @@ class TypeScriptAnalyzer:
         arguments = arguments_node.named_children
         if not arguments:
             return None
-        literal_target = self._literal_string(arguments[0], source)
+        literal_target = self._literal_request_argument(arguments[0], source)
         if literal_target is None:
             return None
         request_target = self._sanitize_request_target(literal_target)
@@ -1082,6 +1147,8 @@ class TypeScriptAnalyzer:
             elif configured_method:
                 http_method = configured_method.upper()
                 method_source = "literal_options"
+        if http_method == "UNKNOWN" and "{" in request_target.request_path:
+            return None
 
         return ParsedEdge(
             relation="REQUESTS",
@@ -1110,6 +1177,24 @@ class TypeScriptAnalyzer:
                 ),
                 "extractor": "tree_sitter_typescript",
             },
+        )
+
+    def _literal_request_argument(self, node: Node, source: bytes) -> str | None:
+        literal = self._literal_string(node, source)
+        if literal is not None:
+            return literal
+        if node.type != "template_string":
+            return None
+        raw = self._text(node, source)
+        if len(raw) < 2 or raw[0] != "`" or raw[-1] != "`":
+            return None
+        inner = raw[1:-1]
+        if not inner.startswith(("/", "http://", "https://")):
+            return None
+        return re.sub(
+            r"\$\{\s*([A-Za-z_$][\w$.\[\]-]*)\s*\}",
+            lambda match: "{" + match.group(1).rsplit(".", 1)[-1] + "}",
+            inner,
         )
 
     def _sanitize_request_target(self, literal_target: str) -> _RequestTarget | None:

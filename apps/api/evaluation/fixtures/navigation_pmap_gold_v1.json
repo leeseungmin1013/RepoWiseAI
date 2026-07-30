@@ -1,0 +1,39 @@
+{
+  "name": "p-map navigation gold v1",
+  "repository": "sindresorhus/p-map",
+  "features": [
+    {
+      "id": "p-map-public-api",
+      "name": "pMap public API 실행",
+      "minimum_coverage": 1.0,
+      "expected_steps": [
+        {
+          "relation_type": "CALLS",
+          "role": "library_entry",
+          "path": "index.js"
+        },
+        {
+          "relation_type": "CALLS",
+          "role": "internal_call",
+          "path": "index.js"
+        }
+      ]
+    },
+    {
+      "id": "p-map-iterable-public-api",
+      "name": "pMapIterable public API 실행",
+      "minimum_coverage": 1.0,
+      "expected_steps": [
+        {
+          "relation_type": "CALLS",
+          "role": "library_entry",
+          "path": "index.js"
+        }
+      ]
+    }
+  ],
+  "thresholds": {
+    "feature_recall": 1.0,
+    "verified_precision": 0.95
+  }
+}

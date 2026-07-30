@@ -21,8 +21,9 @@ Confidence = Literal["verified", "inferred", "unknown"]
 EFFECT_RELATIONS = frozenset(
     {"READS", "WRITES", "NAVIGATES_TO", "USES_EXTERNAL"}
 )
+FAILURE_RELATIONS = frozenset({"RAISES"})
 SEMANTIC_RELATIONS = frozenset(
-    {"TRIGGERS", "REQUESTS", "HANDLED_BY", *EFFECT_RELATIONS}
+    {"TRIGGERS", "REQUESTS", "HANDLED_BY", "CALLS", *EFFECT_RELATIONS, *FAILURE_RELATIONS}
 )
 MAX_REPRESENTATIVE_FLOWS = 3
 MAX_FLOW_STEPS = 7
@@ -147,7 +148,14 @@ def _build_candidates(
         [edge for edge in ordered_edges if edge.relation == "HANDLED_BY"]
     )
     effect_edges_by_source = _index_effect_edges(
-        [edge for edge in ordered_edges if edge.relation in EFFECT_RELATIONS]
+        [
+            edge
+            for edge in ordered_edges
+            if edge.relation in EFFECT_RELATIONS | FAILURE_RELATIONS
+        ]
+    )
+    call_edges_by_source = _index_call_edges(
+        [edge for edge in ordered_edges if edge.relation == "CALLS"]
     )
     trigger_edges = [edge for edge in ordered_edges if edge.relation == "TRIGGERS"]
     representative_triggers = [
@@ -183,11 +191,209 @@ def _build_candidates(
                 request_edges_by_source=request_edges_by_source,
                 handled_edges_by_request=handled_edges_by_request,
                 effect_edges_by_source=effect_edges_by_source,
+                call_edges_by_source=call_edges_by_source,
+            )
+        )
+
+    if not candidates:
+        candidates.extend(
+            _build_library_candidates(
+                snapshot=snapshot,
+                files=ordered_files,
+                symbols=ordered_symbols,
+                semantic_edges=ordered_edges,
             )
         )
 
     candidates.sort(key=lambda item: (-item.rank[0], -item.rank[1], item.rank[2]))
     return candidates, skipped_seed_count, excluded_test_seed_count
+
+
+def _build_library_candidates(
+    *,
+    snapshot: RepositorySnapshot,
+    files: Sequence[FileRecord],
+    symbols: Sequence[Symbol],
+    semantic_edges: Sequence[SymbolEdge],
+) -> list[_FlowCandidate]:
+    file_by_id = {file.id: file for file in files}
+    symbol_by_id = {symbol.id: symbol for symbol in symbols}
+    call_edges_by_source = _index_call_edges(
+        [edge for edge in semantic_edges if edge.relation == "CALLS"]
+    )
+    failure_edges_by_source = _index_effect_edges(
+        [edge for edge in semantic_edges if edge.relation in FAILURE_RELATIONS]
+    )
+    entry_symbols = [
+        symbol
+        for symbol in symbols
+        if symbol.kind in {"function", "component", "class"}
+        and "::" in symbol.qualified_name
+        and "." not in symbol.qualified_name.split("::", 1)[1]
+        and not _is_non_representative_file(file_by_id.get(symbol.file_id))
+    ]
+    preferred_entries = [
+        symbol
+        for symbol in entry_symbols
+        if PurePosixPath(file_by_id[symbol.file_id].path).stem.casefold()
+        in {"index", "main", "mod", "lib", "__init__"}
+    ]
+    if preferred_entries:
+        entry_symbols = preferred_entries
+    entry_symbols.sort(
+        key=lambda symbol: (
+            0
+            if PurePosixPath(file_by_id[symbol.file_id].path).stem
+            in {"index", "main", "__init__"}
+            else 1,
+            file_by_id[symbol.file_id].path.casefold(),
+            symbol.start_line,
+            symbol.display_name.casefold(),
+        )
+    )
+
+    output: list[_FlowCandidate] = []
+    for entry in entry_symbols[:MAX_REPRESENTATIVE_FLOWS]:
+        entry_evidence = _symbol_evidence(
+            entry,
+            file_by_id,
+            "외부에서 호출 가능한 최상위 API 또는 실행 진입점입니다.",
+        )
+        if entry_evidence is None:
+            continue
+        semantic_key = "|".join(
+            (
+                snapshot.commit_sha or snapshot.id,
+                entry.qualified_name,
+                str(entry.start_line),
+            )
+        )
+        flow_id = _stable_id("flow", semantic_key)
+        steps = [
+            _step(
+                flow_id=flow_id,
+                ordinal=1,
+                identity=_step_identity(
+                    relation="CALLS",
+                    symbol=entry,
+                    evidence=entry_evidence,
+                ),
+                title=f"{entry.display_name} public API 진입",
+                role="library_entry",
+                executes_when=f"호출자가 {entry.display_name} API를 사용할 때",
+                input=entry.display_name,
+                output="핵심 실행 로직을 시작합니다.",
+                relation_type="CALLS",
+                confidence="verified",
+                evidence=entry_evidence,
+            )
+        ]
+        reachable_ids = _reachable_call_targets(
+            entry.id, call_edges_by_source, max_depth=2
+        )
+        reachable = sorted(
+            (symbol_by_id[item] for item in reachable_ids if item in symbol_by_id),
+            key=lambda symbol: (
+                file_by_id[symbol.file_id].path.casefold(),
+                symbol.start_line,
+                symbol.qualified_name,
+            ),
+        )
+        for target in reachable:
+            if len(steps) >= MAX_FLOW_STEPS:
+                break
+            evidence = _symbol_evidence(
+                target,
+                file_by_id,
+                f"{entry.display_name}에서 정적으로 연결되는 내부 실행 단계입니다.",
+            )
+            if evidence is None:
+                continue
+            steps.append(
+                _step(
+                    flow_id=flow_id,
+                    ordinal=len(steps) + 1,
+                    identity=_step_identity(
+                        relation="CALLS",
+                        symbol=target,
+                        evidence=evidence,
+                    ),
+                    title=f"{target.display_name} 실행",
+                    role="internal_call",
+                    executes_when="상위 실행 단계가 내부 함수를 호출할 때",
+                    input=target.display_name,
+                    output="처리 결과를 상위 호출자에게 전달합니다.",
+                    relation_type="CALLS",
+                    confidence="inferred",
+                    evidence=evidence,
+                )
+            )
+
+        relevant_ids = {entry.id, *reachable_ids}
+        failure_steps = _build_failure_steps(
+            flow_id=flow_id,
+            failure_edges=[
+                edge
+                for symbol_id in sorted(relevant_ids)
+                for edge in failure_edges_by_source.get(symbol_id, [])
+            ],
+            file_by_id=file_by_id,
+            symbol_by_id=symbol_by_id,
+        )
+        linked_steps = _link_steps(steps)
+        limitations = []
+        if len(linked_steps) == 1:
+            limitations.append(
+                "정적으로 해석 가능한 내부 호출 대상을 찾지 못해 public API 진입만 표시합니다."
+            )
+        if not failure_steps:
+            limitations.append(
+                "명시적인 예외 발생 근거를 찾지 못해 failure_steps를 생성하지 않았습니다."
+            )
+        title = f"{entry.display_name} public API 실행 흐름"
+        user_goal = f"{entry.display_name} 호출이 내부 로직으로 이어지는 경로를 이해합니다."
+        trigger = f"외부 호출자가 {entry.display_name} API를 호출합니다."
+        outcome = (
+            linked_steps[-1].output_or_side_effect
+            if len(linked_steps) > 1
+            else "public API 실행을 시작합니다."
+        )
+        detail = FeatureFlowDetail(
+            id=flow_id,
+            title=title,
+            user_goal=user_goal,
+            trigger=trigger,
+            outcome=outcome,
+            normal_steps=linked_steps,
+            failure_steps=failure_steps,
+            involved_areas=["Public API", "Core logic"],
+            confidence="inferred" if len(linked_steps) > 1 else "unknown",
+            limitations=limitations,
+        )
+        summary = FeatureFlowSummary(
+            id=flow_id,
+            title=title,
+            user_goal=user_goal,
+            trigger=trigger,
+            outcome=outcome,
+            step_count=len(linked_steps),
+            involved_areas=detail.involved_areas,
+            confidence=detail.confidence,
+            evidence_coverage=1.0,
+            entry_evidence=entry_evidence,
+        )
+        output.append(
+            _FlowCandidate(
+                summary=summary,
+                detail=detail,
+                rank=(
+                    2 if len(linked_steps) > 1 else 1,
+                    0.65,
+                    semantic_key.casefold(),
+                ),
+            )
+        )
+    return output
 
 
 def _deduplicate_trigger_seeds(
@@ -261,6 +467,7 @@ def _build_candidate(
     request_edges_by_source: dict[str, list[SymbolEdge]],
     handled_edges_by_request: dict[tuple[str, str, str], list[SymbolEdge]],
     effect_edges_by_source: dict[str, list[SymbolEdge]],
+    call_edges_by_source: dict[str, list[SymbolEdge]],
 ) -> _FlowCandidate:
     metadata = _metadata(trigger_edge)
     event_name = str(metadata.get("event_name") or "이벤트")
@@ -273,14 +480,33 @@ def _build_candidate(
         metadata.get("handler_identifier") or trigger_edge.target_path or "대상 핸들러"
     )
 
+    reachable_symbol_ids = (
+        _reachable_call_targets(handler.id, call_edges_by_source) if handler else set()
+    )
+    flow_symbol_ids = ({handler.id} if handler else set()) | reachable_symbol_ids
     matching_requests = _deduplicate_request_edges(
-        request_edges_by_source.get(handler.id, []) if handler else []
+        [
+            edge
+            for symbol_id in sorted(flow_symbol_ids)
+            for edge in request_edges_by_source.get(symbol_id, [])
+        ]
     )
     request_edge, handled_edge = _select_request_and_handler(
         matching_requests,
         handled_edges_by_request,
     )
-    handler_effects = effect_edges_by_source.get(handler.id, []) if handler else []
+    handler_effects = [
+        edge
+        for symbol_id in sorted(flow_symbol_ids)
+        for edge in effect_edges_by_source.get(symbol_id, [])
+        if edge.relation in EFFECT_RELATIONS
+    ]
+    handler_failures = [
+        edge
+        for symbol_id in sorted(flow_symbol_ids)
+        for edge in effect_edges_by_source.get(symbol_id, [])
+        if edge.relation in FAILURE_RELATIONS
+    ]
     request_metadata = _metadata(request_edge) if request_edge else {}
     method = str(request_metadata.get("http_method") or "").upper()
     request_path = _safe_request_path(
@@ -295,9 +521,24 @@ def _build_candidate(
     route_handler = (
         symbol_by_id.get(handled_edge.target_symbol_id or "") if handled_edge else None
     )
-    route_effects = (
-        effect_edges_by_source.get(route_handler.id, []) if route_handler else []
+    route_symbol_ids = (
+        {route_handler.id}
+        | _reachable_call_targets(route_handler.id, call_edges_by_source)
+        if route_handler
+        else set()
     )
+    route_effects = [
+        edge
+        for symbol_id in sorted(route_symbol_ids)
+        for edge in effect_edges_by_source.get(symbol_id, [])
+        if edge.relation in EFFECT_RELATIONS
+    ]
+    route_failures = [
+        edge
+        for symbol_id in sorted(route_symbol_ids)
+        for edge in effect_edges_by_source.get(symbol_id, [])
+        if edge.relation in FAILURE_RELATIONS
+    ]
     route_evidence = (
         _symbol_evidence(
             route_handler,
@@ -563,9 +804,16 @@ def _build_candidate(
             f"같은 핸들러의 추가 요청 {len(matching_requests) - 1}개는 "
             "대표 직선 흐름에서 생략했습니다."
         )
-    limitations.append(
-        "실패 경로는 v2 정적 분석에서 확정하지 않으므로 failure_steps를 비워 두었습니다."
+    failure_steps = _build_failure_steps(
+        flow_id=flow_id,
+        failure_edges=[*handler_failures, *route_failures],
+        file_by_id=file_by_id,
+        symbol_by_id=symbol_by_id,
     )
+    if not failure_steps:
+        limitations.append(
+            "명시적인 예외 발생 근거를 찾지 못해 failure_steps를 생성하지 않았습니다."
+        )
 
     linked_steps = _link_steps(steps)
     involved_areas = _involved_areas(linked_steps)
@@ -606,7 +854,7 @@ def _build_candidate(
         trigger=trigger,
         outcome=outcome,
         normal_steps=linked_steps,
-        failure_steps=[],
+        failure_steps=failure_steps,
         involved_areas=involved_areas,
         confidence=confidence,
         limitations=limitations,
@@ -784,6 +1032,38 @@ def _select_request_and_handler(
     return choices[0] if choices else (None, None)
 
 
+def _index_call_edges(edges: Sequence[SymbolEdge]) -> dict[str, list[SymbolEdge]]:
+    indexed: dict[str, list[SymbolEdge]] = {}
+    for edge in edges:
+        if edge.source_symbol_id and edge.target_symbol_id:
+            indexed.setdefault(edge.source_symbol_id, []).append(edge)
+    for values in indexed.values():
+        values.sort(key=_edge_sort_key)
+    return indexed
+
+
+def _reachable_call_targets(
+    source_symbol_id: str,
+    call_edges_by_source: dict[str, list[SymbolEdge]],
+    *,
+    max_depth: int = 3,
+) -> set[str]:
+    visited: set[str] = set()
+    frontier = {source_symbol_id}
+    for _ in range(max_depth):
+        next_frontier: set[str] = set()
+        for symbol_id in sorted(frontier):
+            for edge in call_edges_by_source.get(symbol_id, []):
+                target_id = edge.target_symbol_id
+                if target_id and target_id not in visited and target_id != source_symbol_id:
+                    visited.add(target_id)
+                    next_frontier.add(target_id)
+        frontier = next_frontier
+        if not frontier:
+            break
+    return visited
+
+
 def _index_request_edges(edges: Sequence[SymbolEdge]) -> dict[str, list[SymbolEdge]]:
     indexed: dict[str, list[SymbolEdge]] = {}
     for edge in edges:
@@ -792,6 +1072,55 @@ def _index_request_edges(edges: Sequence[SymbolEdge]) -> dict[str, list[SymbolEd
     for values in indexed.values():
         values.sort(key=_edge_sort_key)
     return indexed
+
+
+def _build_failure_steps(
+    *,
+    flow_id: str,
+    failure_edges: Sequence[SymbolEdge],
+    file_by_id: dict[str, FileRecord],
+    symbol_by_id: dict[str, Symbol],
+) -> list[FeatureFlowStep]:
+    steps: list[FeatureFlowStep] = []
+    seen: set[tuple[str, int, str]] = set()
+    for edge in sorted(failure_edges, key=_edge_sort_key):
+        evidence = _source_evidence(
+            edge,
+            file_by_id,
+            symbol_by_id,
+            "명시적으로 예외를 발생시키는 코드 위치입니다.",
+        )
+        if evidence is None:
+            continue
+        key = (evidence.path, evidence.start_line, edge.target_path or "")
+        if key in seen:
+            continue
+        seen.add(key)
+        owner = symbol_by_id.get(edge.source_symbol_id or "")
+        target = str(edge.target_path or "exception")
+        steps.append(
+            _step(
+                flow_id=flow_id,
+                ordinal=len(steps) + 1,
+                identity=_step_identity(
+                    relation="RAISES",
+                    symbol=owner,
+                    evidence=evidence,
+                    semantic_target=target,
+                ),
+                title=f"{target} 예외 발생",
+                role="failure",
+                executes_when="검증 또는 처리 조건을 만족하지 못할 때",
+                input="실패 조건",
+                output=f"{target} 예외로 정상 흐름을 중단합니다.",
+                relation_type="RAISES",
+                confidence=_confidence_for_edge(edge),
+                evidence=evidence,
+            )
+        )
+        if len(steps) >= 3:
+            break
+    return _link_steps(steps)
 
 
 def _index_handled_edges(

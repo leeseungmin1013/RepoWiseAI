@@ -70,7 +70,7 @@ def _catalog(details: list[FeatureFlowDetail]) -> FeatureFlowListResponse:
         repository_name="example/flow-demo",
         snapshot_id="snap-gold",
         commit_sha="commit-gold",
-        analysis_version="feature-flow-v2",
+        analysis_version="feature-flow-v3",
         flows=[
             FeatureFlowSummary(
                 id=detail.id,

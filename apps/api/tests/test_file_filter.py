@@ -12,6 +12,7 @@ def write(path: Path, content: str) -> None:
 def test_collects_supported_source_and_applies_ignore_rules(tmp_path: Path) -> None:
     write(tmp_path / ".gitignore", "ignored.ts\n")
     write(tmp_path / "src" / "main.ts", "export const answer = 42;\n")
+    write(tmp_path / "src" / "worker.py", "def run():\n    return 42\n")
     write(tmp_path / "README.md", "# Example\n")
     write(tmp_path / "ignored.ts", "export const ignored = true;\n")
     write(tmp_path / "node_modules" / "package" / "index.js", "module.exports = {};\n")
@@ -25,6 +26,11 @@ def test_collects_supported_source_and_applies_ignore_rules(tmp_path: Path) -> N
     )
     files = collect_source_files(tmp_path, settings)
 
-    assert [file.path for file in files] == ["README.md", "src/main.ts"]
+    assert [file.path for file in files] == [
+        "README.md",
+        "src/main.ts",
+        "src/worker.py",
+    ]
     assert files[1].language == "typescript"
+    assert files[2].language == "python"
     assert files[1].content_hash.startswith("sha256:")

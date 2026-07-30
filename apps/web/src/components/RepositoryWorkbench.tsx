@@ -20,8 +20,11 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import {
   api,
   type ActivityAttemptSummary,
+  type ArchitectureGraph,
+  type ArchitectureGraphDiff,
   type AssessmentSession,
   type ChatAnswer,
+  type ChangeBrief,
   type Citation,
   type CodeExplanation,
   type CodeExplanationDepth,
@@ -57,6 +60,7 @@ import { useDeepLearningTask } from "@/hooks/useDeepLearningTask";
 import { routeQuestionToDeepTask } from "@/lib/deep-tasks";
 
 import { AssistantPanel } from "./AssistantPanel";
+import { ArchitectureMapPanel } from "./ArchitectureMapPanel";
 import { ChangeBriefPanel } from "./ChangeBriefPanel";
 import { CodeFocusPanel } from "./CodeFocusPanel";
 import { CodePanel, type CodeHighlight } from "./CodePanel";
@@ -90,11 +94,17 @@ const STAGE_LABELS: Record<string, string> = {
 
 type MobilePane = "tree" | "code" | "guide";
 type WorkspaceMode = "map" | "flow" | "explorer" | "change" | "learning";
+type MapView = "summary" | "structure";
 
 export function RepositoryWorkbench() {
+  const architectureGraphEnabled =
+    process.env.NEXT_PUBLIC_ARCHITECTURE_GRAPH_ENABLED !== "false";
+  const architectureLabelEnhancementEnabled =
+    process.env.NEXT_PUBLIC_NAVIGATION_LLM_LABELS_ENABLED === "true";
   const [repositoryUrl, setRepositoryUrl] = useState("");
   const [branch, setBranch] = useState("");
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [health, setHealth] = useState<Health | null>(null);
   const [profile, setProfile] = useState<LearnerProfile | null>(null);
   const [assessment, setAssessment] = useState<AssessmentSession | null>(null);
@@ -106,6 +116,13 @@ export function RepositoryWorkbench() {
   const [startHere, setStartHere] = useState<StartHere | null>(null);
   const [projectMap, setProjectMap] = useState<ProjectMap | null>(null);
   const [projectMapLoading, setProjectMapLoading] = useState(false);
+  const [architectureGraph, setArchitectureGraph] = useState<ArchitectureGraph | null>(null);
+  const [architectureGraphLoading, setArchitectureGraphLoading] = useState(false);
+  const [architectureGraphError, setArchitectureGraphError] = useState<string | null>(null);
+  const [architectureGraphDiff, setArchitectureGraphDiff] =
+    useState<ArchitectureGraphDiff | null>(null);
+  const [architectureDiffLoading, setArchitectureDiffLoading] = useState(false);
+  const [architectureLabelsLoading, setArchitectureLabelsLoading] = useState(false);
   const [featureFlowCatalog, setFeatureFlowCatalog] =
     useState<FeatureFlowCatalog | null>(null);
   const [selectedFeatureFlowId, setSelectedFeatureFlowId] = useState<string | null>(null);
@@ -139,8 +156,10 @@ export function RepositoryWorkbench() {
   const [fileLoading, setFileLoading] = useState(false);
   const [view, setView] = useState<"code" | "graph">("code");
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("map");
+  const [mapView, setMapView] = useState<MapView>("summary");
   const [mobilePane, setMobilePane] = useState<MobilePane>("code");
   const loadedProjectMap = useRef<string | null>(null);
+  const loadedArchitectureGraph = useRef<string | null>(null);
   const loadedFeatureFlowCatalog = useRef<string | null>(null);
   const loadedFeatureFlowDetail = useRef<string | null>(null);
   const loadedExplorer = useRef<string | null>(null);
@@ -233,6 +252,10 @@ export function RepositoryWorkbench() {
     start: startChangeBriefTask,
     task: activeChangeBriefTask,
   } = changeBriefTask;
+  const completedChangeBrief = useMemo<ChangeBrief | null>(() => {
+    const result = activeChangeBriefTask?.result;
+    return result && "confirmed_direct_impacts" in result ? result : null;
+  }, [activeChangeBriefTask?.result]);
 
   useEffect(() => {
     const nextSessionId = learningSession?.id ?? null;
@@ -278,6 +301,7 @@ export function RepositoryWorkbench() {
       if (cancelled) return;
       if (healthResult.status === "fulfilled") setHealth(healthResult.value);
       if (snapshotsResult.status === "fulfilled" && snapshotsResult.value.length) {
+        setSnapshots(snapshotsResult.value);
         setSnapshot(snapshotsResult.value[0]);
       }
       if (profileResult.status === "fulfilled") {
@@ -297,11 +321,54 @@ export function RepositoryWorkbench() {
     const interval = window.setInterval(() => {
       api
         .getSnapshot(snapshotId)
-        .then(setSnapshot)
+        .then((nextSnapshot) => {
+          setSnapshot(nextSnapshot);
+          setSnapshots((current) =>
+            current.map((item) => (item.id === nextSnapshot.id ? nextSnapshot : item)),
+          );
+        })
         .catch((reason: unknown) => setError(errorMessage(reason)));
     }, 1_200);
     return () => window.clearInterval(interval);
   }, [snapshot]);
+
+  useEffect(() => {
+    if (
+      !snapshot ||
+      snapshot.status !== "ready" ||
+      workspaceMode !== "map" ||
+      mapView !== "structure" ||
+      !architectureGraphEnabled
+    ) {
+      return;
+    }
+    const snapshotId = snapshot.id;
+    if (architectureGraph?.snapshot_id === snapshotId) return;
+    if (loadedArchitectureGraph.current === snapshotId) return;
+    loadedArchitectureGraph.current = snapshotId;
+    let cancelled = false;
+    setArchitectureGraphLoading(true);
+    setArchitectureGraphError(null);
+    api
+      .getArchitectureGraph(snapshotId)
+      .then((nextGraph) => {
+        if (!cancelled) setArchitectureGraph(nextGraph);
+      })
+      .catch((reason: unknown) => {
+        if (cancelled) return;
+        loadedArchitectureGraph.current = null;
+        setArchitectureGraphError(errorMessage(reason));
+      })
+      .finally(() => {
+        if (!cancelled) setArchitectureGraphLoading(false);
+      });
+    return () => {
+      cancelled = true;
+      if (loadedArchitectureGraph.current === snapshotId) {
+        loadedArchitectureGraph.current = null;
+      }
+    };
+  }, [architectureGraph?.snapshot_id, architectureGraphEnabled, mapView, snapshot, workspaceMode]);
 
   useEffect(() => {
     if (!snapshot || snapshot.status !== "ready") return;
@@ -332,7 +399,9 @@ export function RepositoryWorkbench() {
   }, [snapshot]);
 
   useEffect(() => {
-    if (!snapshot || snapshot.status !== "ready" || workspaceMode !== "flow") return;
+    const needsFlows =
+      workspaceMode === "flow" || (workspaceMode === "map" && mapView === "structure");
+    if (!snapshot || snapshot.status !== "ready" || !needsFlows) return;
     const snapshotId = snapshot.id;
     if (featureFlowCatalog?.snapshot_id === snapshotId) return;
     if (loadedFeatureFlowCatalog.current === snapshotId) return;
@@ -359,13 +428,13 @@ export function RepositoryWorkbench() {
         loadedFeatureFlowCatalog.current = null;
       }
     };
-  }, [featureFlowCatalog?.snapshot_id, featureFlowReload, snapshot, workspaceMode]);
+  }, [featureFlowCatalog?.snapshot_id, featureFlowReload, mapView, snapshot, workspaceMode]);
 
   useEffect(() => {
     if (
       !snapshot ||
       snapshot.status !== "ready" ||
-      workspaceMode !== "flow" ||
+      (workspaceMode !== "flow" && !(workspaceMode === "map" && mapView === "structure")) ||
       !selectedFeatureFlowId
     ) {
       return;
@@ -417,7 +486,7 @@ export function RepositoryWorkbench() {
         loadedFeatureFlowDetail.current = null;
       }
     };
-  }, [featureFlowDetail, featureFlowReload, selectedFeatureFlowId, snapshot, workspaceMode]);
+  }, [featureFlowDetail, featureFlowReload, mapView, selectedFeatureFlowId, snapshot, workspaceMode]);
 
   useEffect(() => {
     if (
@@ -616,6 +685,10 @@ export function RepositoryWorkbench() {
     try {
       const response = await api.createRepository(repositoryUrl, branch);
       setSnapshot(response.snapshot);
+      setSnapshots((current) => [
+        response.snapshot,
+        ...current.filter((item) => item.id !== response.snapshot.id),
+      ]);
     } catch (reason) {
       setError(errorMessage(reason));
     } finally {
@@ -634,6 +707,12 @@ export function RepositoryWorkbench() {
     setStartHere(null);
     setProjectMap(null);
     setProjectMapLoading(false);
+    setArchitectureGraph(null);
+    setArchitectureGraphLoading(false);
+    setArchitectureGraphError(null);
+    setArchitectureGraphDiff(null);
+    setArchitectureDiffLoading(false);
+    setArchitectureLabelsLoading(false);
     setFeatureFlowCatalog(null);
     setSelectedFeatureFlowId(null);
     setFeatureFlowDetail(null);
@@ -665,8 +744,10 @@ export function RepositoryWorkbench() {
     setCodeFocusError(null);
     setHighlight(null);
     setWorkspaceMode("map");
+    setMapView("summary");
     setMobilePane("code");
     loadedProjectMap.current = null;
+    loadedArchitectureGraph.current = null;
     loadedFeatureFlowCatalog.current = null;
     loadedFeatureFlowDetail.current = null;
     loadedExplorer.current = null;
@@ -676,6 +757,12 @@ export function RepositoryWorkbench() {
 
   function showProjectMap() {
     setWorkspaceMode("map");
+    setMapView("summary");
+  }
+
+  function showStructureMap() {
+    setWorkspaceMode("map");
+    setMapView("structure");
   }
 
   function openExplorer() {
@@ -914,6 +1001,42 @@ export function RepositoryWorkbench() {
       end_line: evidence.end_line,
     });
     setWorkspaceMode("change");
+  }
+
+  function requestArchitectureChangeBrief(evidence: ProjectMapEvidence) {
+    openChangeBriefEvidence(evidence);
+    setMobilePane("guide");
+  }
+
+  async function compareArchitectureSnapshot(baseSnapshotId: string | null) {
+    if (!snapshot || !baseSnapshotId) {
+      setArchitectureGraphDiff(null);
+      return;
+    }
+    setArchitectureDiffLoading(true);
+    setArchitectureGraphError(null);
+    try {
+      setArchitectureGraphDiff(
+        await api.getArchitectureGraphDiff(snapshot.id, baseSnapshotId),
+      );
+    } catch (reason) {
+      setArchitectureGraphError(errorMessage(reason));
+    } finally {
+      setArchitectureDiffLoading(false);
+    }
+  }
+
+  async function enhanceArchitectureLabels() {
+    if (!snapshot || architectureLabelsLoading) return;
+    setArchitectureLabelsLoading(true);
+    setArchitectureGraphError(null);
+    try {
+      setArchitectureGraph(await api.enhanceArchitectureGraphLabels(snapshot.id));
+    } catch (reason) {
+      setArchitectureGraphError(errorMessage(reason));
+    } finally {
+      setArchitectureLabelsLoading(false);
+    }
   }
 
   function openCodeFocusEvidence(evidence: ProjectMapEvidence) {
@@ -1352,16 +1475,72 @@ export function RepositoryWorkbench() {
       ) : null}
 
       {workspaceMode === "map" ? (
-        <ProjectMapPanel
-          loading={projectMapLoading || Boolean(isAnalyzing)}
-          map={projectMap}
-          featureFlows={featureFlowCatalog?.flows ?? []}
-          onOpenExplorer={openExplorer}
-          onOpenFeatureFlows={openFeatureFlows}
-          onOpenEvidence={openMapEvidence}
-          onStartLearning={startLearning}
-          snapshot={snapshot}
-        />
+        <div className="map-workspace">
+          <div className="map-view-switcher" aria-label="프로젝트 맵 보기">
+            <button
+              aria-pressed={mapView === "summary"}
+              className={mapView === "summary" ? "is-active" : ""}
+              onClick={() => setMapView("summary")}
+              type="button"
+            >
+              <Waypoints aria-hidden size={14} /> 요약
+            </button>
+            {architectureGraphEnabled ? (
+              <button
+                aria-pressed={mapView === "structure"}
+                className={mapView === "structure" ? "is-active" : ""}
+                onClick={showStructureMap}
+                type="button"
+              >
+                <GitBranch aria-hidden size={14} /> 구조도
+              </button>
+            ) : null}
+          </div>
+          {mapView === "structure" ? (
+            <ArchitectureMapPanel
+              canEnhanceLabels={architectureLabelEnhancementEnabled}
+              changeBrief={completedChangeBrief}
+              comparisonSnapshots={snapshots.filter(
+                (item) =>
+                  item.id !== snapshot?.id &&
+                  item.repository_id === snapshot?.repository_id &&
+                  item.status === "ready" &&
+                  item.parser_version === "semantic-ts-v2",
+              )}
+              diff={architectureGraphDiff}
+              diffLoading={architectureDiffLoading}
+              enhancingLabels={architectureLabelsLoading}
+              error={architectureGraphError}
+              flow={featureFlowDetail}
+              flows={featureFlowCatalog?.flows ?? []}
+              graph={architectureGraph}
+              loading={architectureGraphLoading || Boolean(isAnalyzing)}
+              onOpenDependencyGraph={openExplorer}
+              onOpenEvidence={openMapEvidence}
+              onCompareSnapshot={(snapshotId) => void compareArchitectureSnapshot(snapshotId)}
+              onEnhanceLabels={() => void enhanceArchitectureLabels()}
+              onRequestChangeBrief={requestArchitectureChangeBrief}
+              onSelectFlow={(flowId) => {
+                featureFlowDetailRequestSequence.current += 1;
+                setSelectedFeatureFlowId(flowId);
+                setFeatureFlowDetail(null);
+                loadedFeatureFlowDetail.current = null;
+              }}
+              selectedFlowId={selectedFeatureFlowId}
+            />
+          ) : (
+            <ProjectMapPanel
+              loading={projectMapLoading || Boolean(isAnalyzing)}
+              map={projectMap}
+              featureFlows={featureFlowCatalog?.flows ?? []}
+              onOpenExplorer={openExplorer}
+              onOpenFeatureFlows={openFeatureFlows}
+              onOpenEvidence={openMapEvidence}
+              onStartLearning={startLearning}
+              snapshot={snapshot}
+            />
+          )}
+        </div>
       ) : workspaceMode === "flow" ? (
         <FeatureFlowPanel
           catalog={featureFlowCatalog}

@@ -25,7 +25,7 @@ const catalog: FeatureFlowCatalog = {
   repository_name: "RepoWiseAI",
   snapshot_id: "snapshot-1",
   commit_sha: "abcdef1234567890",
-  analysis_version: "feature-flow-v2",
+  analysis_version: "feature-flow-v3",
   flows: [
     {
       id: "flow-project-map",

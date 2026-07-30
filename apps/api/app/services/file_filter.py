@@ -48,6 +48,7 @@ LANGUAGE_BY_SUFFIX = {
     ".jsx": "jsx",
     ".mjs": "javascript",
     ".cjs": "javascript",
+    ".py": "python",
     ".md": "markdown",
     ".mdx": "markdown",
     ".json": "json",

@@ -132,6 +132,33 @@ export function CheckoutForm() {
     assert all(edge.metadata["awaited"] is True for edge in requests)
 
 
+def test_extracts_local_fetch_wrapper_requests_and_template_paths() -> None:
+    source = """async function request(path: string, init?: RequestInit) {
+  return fetch(`/api${path}`, init);
+}
+
+export const api = {
+  getSnapshot: (snapshotId: string) =>
+    request(`/snapshots/${snapshotId}`),
+  updateSnapshot: (snapshotId: string) =>
+    request(`/snapshots/${snapshotId}`, { method: "PATCH" }),
+};
+"""
+
+    result = TypeScriptAnalyzer().parse("src/lib/api.ts", source, "typescript")
+
+    symbols = {symbol.display_name: symbol for symbol in result.symbols}
+    assert {"request", "getSnapshot", "updateSnapshot"} <= symbols.keys()
+    requests = [edge for edge in result.edges if edge.relation == "REQUESTS"]
+    assert [
+        (edge.source_qualified_name, edge.target, edge.metadata["http_method"])
+        for edge in requests
+    ] == [
+        ("src/lib/api.ts::getSnapshot", "/snapshots/{snapshotId}", "GET"),
+        ("src/lib/api.ts::updateSnapshot", "/snapshots/{snapshotId}", "PATCH"),
+    ]
+
+
 def test_marks_arrow_function_route_methods_as_routes() -> None:
     result = TypeScriptAnalyzer().parse(
         "src/app/api/orders/route.ts",

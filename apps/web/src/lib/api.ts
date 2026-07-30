@@ -111,6 +111,15 @@ export type StartHere = {
 
 export type ProjectMapConfidence = "verified" | "inferred" | "unknown";
 
+export type ArchitectureLayer =
+  | "client"
+  | "server"
+  | "domain"
+  | "data"
+  | "external"
+  | "configuration"
+  | "shared";
+
 export type ProjectMapEvidence = {
   file_id: string;
   path: string;
@@ -173,6 +182,82 @@ export type ProjectMap = {
   environment_variables: ProjectMapEnvironmentVariable[];
   read_first: ProjectMapReadFirst[];
   limitations: string[];
+};
+
+export type ArchitectureGraphGroup = {
+  id: string;
+  label: string;
+  description: string;
+  layer: ArchitectureLayer;
+  confidence: ProjectMapConfidence;
+  evidence: ProjectMapEvidence[];
+};
+
+export type ArchitectureGraphNode = {
+  id: string;
+  label: string;
+  responsibility: string;
+  node_type: string;
+  group_id: string | null;
+  confidence: ProjectMapConfidence;
+  inputs: string[];
+  outputs: string[];
+  capability_ids: string[];
+  feature_flow_ids: string[];
+  evidence: ProjectMapEvidence[];
+};
+
+export type ArchitectureGraphEdge = {
+  id: string;
+  source: string;
+  target: string;
+  relation: string;
+  label: string;
+  description: string;
+  confidence: ProjectMapConfidence;
+  feature_flow_ids: string[];
+  evidence: ProjectMapEvidence[];
+};
+
+export type ArchitectureGraph = {
+  repository_name: string;
+  snapshot_id: string;
+  commit_sha: string;
+  analysis_version: string;
+  summary: string;
+  groups: ArchitectureGraphGroup[];
+  nodes: ArchitectureGraphNode[];
+  edges: ArchitectureGraphEdge[];
+  limitations: string[];
+};
+
+export type ArchitectureGraphDiff = {
+  repository_name: string;
+  base_snapshot_id: string;
+  target_snapshot_id: string;
+  base_commit_sha: string;
+  target_commit_sha: string;
+  nodes: Array<{
+    path: string;
+    status: "added" | "removed" | "changed";
+    before_label: string | null;
+    after_label: string | null;
+    before_responsibility: string | null;
+    after_responsibility: string | null;
+  }>;
+  edges: Array<{
+    source_path: string;
+    target_path: string;
+    relation: string;
+    status: "added" | "removed";
+  }>;
+  summary: {
+    nodes_added: number;
+    nodes_removed: number;
+    nodes_changed: number;
+    edges_added: number;
+    edges_removed: number;
+  };
 };
 
 export type FeatureFlowEvidence = ProjectMapEvidence;
@@ -828,6 +913,23 @@ export const api = {
       `/snapshots/${snapshotId}/symbols?file_id=${encodeURIComponent(fileId)}`,
     ),
   getGraph: (snapshotId: string) => request<GraphData>(`/snapshots/${snapshotId}/graph`),
+  getArchitectureGraph: (snapshotId: string, featureFlowId?: string | null) =>
+    request<ArchitectureGraph>(
+      `/snapshots/${snapshotId}/architecture-graph${
+        featureFlowId ? `?feature_flow_id=${encodeURIComponent(featureFlowId)}` : ""
+      }`,
+    ),
+  getArchitectureGraphDiff: (snapshotId: string, baseSnapshotId: string) =>
+    request<ArchitectureGraphDiff>(
+      `/snapshots/${snapshotId}/architecture-graph/diff?base_snapshot_id=${encodeURIComponent(
+        baseSnapshotId,
+      )}`,
+    ),
+  enhanceArchitectureGraphLabels: (snapshotId: string) =>
+    request<ArchitectureGraph>(
+      `/snapshots/${snapshotId}/architecture-graph/enhance-labels`,
+      { method: "POST" },
+    ),
   getStartHere: (snapshotId: string) =>
     request<StartHere>(`/snapshots/${snapshotId}/start-here`),
   getProjectMap: (snapshotId: string) =>

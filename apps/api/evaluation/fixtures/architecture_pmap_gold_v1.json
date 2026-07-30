@@ -1,0 +1,39 @@
+{
+  "name": "p-map architecture gold v1",
+  "repository": "sindresorhus/p-map",
+  "nodes": [
+    {
+      "id": "public-api",
+      "evidence_paths": ["index.js"]
+    },
+    {
+      "id": "public-types",
+      "evidence_paths": ["index.d.ts"]
+    },
+    {
+      "id": "package-contract",
+      "evidence_paths": ["package.json"]
+    },
+    {
+      "id": "usage-documentation",
+      "evidence_paths": ["readme.md"]
+    }
+  ],
+  "edges": [],
+  "flows": [
+    {
+      "flow_id": "flow_5749d7d389a9021d00a4",
+      "evidence_paths": ["index.js"]
+    }
+  ],
+  "noise_paths": ["test.js", "test-multiple-pmapskips-performance.js"],
+  "thresholds": {
+    "architecture_node_recall": 0.8,
+    "verified_node_precision": 0.95,
+    "required_edge_recall": 1.0,
+    "feature_mapping_coverage": 1.0,
+    "noise_ratio": 0.15,
+    "evidence_validity": 1.0,
+    "graph_size_compliance": 1.0
+  }
+}

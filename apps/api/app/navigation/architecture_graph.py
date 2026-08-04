@@ -402,7 +402,20 @@ def _responsibility(path: str, node_type: str, roles: list[str], descriptions: l
     if roles:
         role = roles[0].replace("_", " ")
         return f"기능 흐름에서 {role} 단계를 담당합니다."
-    return f"{_human_label(path)} {node_type}의 주요 책임과 경계를 나타냅니다."
+    label = _human_label(path)
+    templates = {
+        "api": "사용자나 다른 시스템의 요청을 받아 내부 처리 과정으로 연결합니다.",
+        "worker": "시간이 오래 걸리는 작업을 화면 요청과 분리해 백그라운드에서 처리합니다.",
+        "data model": "서비스가 기억해야 할 정보의 형태와 저장 규칙을 정의합니다.",
+        "component": "사용자가 정보를 보고 행동할 수 있는 화면 요소를 구성합니다.",
+        "hook": "여러 화면에서 함께 쓰는 상태와 사용자 상호작용을 관리합니다.",
+        "configuration": "서비스가 실행될 환경과 도구의 동작 방식을 설정합니다.",
+        "module": f"{label}에 필요한 핵심 규칙과 재사용 가능한 처리를 제공합니다.",
+    }
+    return templates.get(
+        node_type,
+        f"{label}에서 사용하는 입력을 목적에 맞는 결과로 바꿉니다.",
+    )
 
 
 def _human_label(path: str) -> str:

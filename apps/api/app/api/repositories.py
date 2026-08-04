@@ -26,12 +26,15 @@ from app.navigation.artifacts import (
 from app.navigation.code_focus import SEMANTIC_FOCUS_RELATIONS, build_code_explanation
 from app.navigation.feature_flow import build_feature_flow, build_feature_flows
 from app.navigation.project_map import build_project_map
+from app.navigation.repository_story import build_repository_story
+from app.navigation.repository_story_validation import validate_repository_story
 from app.navigation.versions import (
     ARCHITECTURE_GRAPH_VERSION,
     ARCHITECTURE_LABEL_VERSION,
     CODE_EXPLANATION_VERSION,
     FEATURE_FLOW_VERSION,
     PROJECT_MAP_VERSION,
+    REPOSITORY_STORY_VERSION,
 )
 from app.queue import enqueue_repository_analysis
 from app.schemas import (
@@ -50,6 +53,7 @@ from app.schemas import (
     ProjectMapResponse,
     RepositoryCreate,
     RepositoryCreateResponse,
+    RepositoryStoryResponse,
     RepositorySummary,
     SnapshotResponse,
     StartHereResponse,
@@ -379,11 +383,7 @@ def export_architecture_graph_mermaid(snapshot_id: str, db: SessionDep):
     return PlainTextResponse(
         architecture_graph_to_mermaid(graph),
         media_type="text/plain; charset=utf-8",
-        headers={
-            "Content-Disposition": (
-                f'attachment; filename="{snapshot_id}-architecture.mmd"'
-            )
-        },
+        headers={"Content-Disposition": (f'attachment; filename="{snapshot_id}-architecture.mmd"')},
     )
 
 
@@ -683,6 +683,82 @@ def get_feature_flow(snapshot_id: str, flow_id: str, response: Response, db: Ses
     response.headers["X-Navigation-Cache-Write"] = "STORED" if stored else "SKIPPED"
     response.headers["X-Navigation-Artifact-Version"] = FEATURE_FLOW_VERSION
     return flow
+
+
+@router.get(
+    "/snapshots/{snapshot_id}/repository-story",
+    response_model=RepositoryStoryResponse,
+)
+def get_repository_story(snapshot_id: str, response: Response, db: SessionDep):
+    snapshot = load_snapshot(db, snapshot_id)
+    require_ready(snapshot)
+    commit_sha = snapshot.commit_sha or ""
+    cached = load_navigation_artifact(
+        db,
+        snapshot_id=snapshot_id,
+        artifact_type="repository_story",
+        artifact_key="overview",
+        artifact_version=REPOSITORY_STORY_VERSION,
+        payload_model=RepositoryStoryResponse,
+        commit_sha=commit_sha,
+    )
+    if cached is not None and cached.snapshot_id == snapshot_id:
+        response.headers["X-Navigation-Cache"] = "HIT"
+        response.headers["X-Navigation-Artifact-Version"] = REPOSITORY_STORY_VERSION
+        return cached
+
+    project_map = get_project_map(snapshot_id, Response(), db)
+    implementation_graph = get_architecture_graph(snapshot_id, Response(), db)
+    feature_catalog = get_feature_flows(snapshot_id, Response(), db)
+    story = build_repository_story(
+        snapshot,
+        project_map,
+        implementation_graph,
+        feature_catalog.flows,
+    )
+    files = list(
+        db.scalars(
+            select(FileRecord)
+            .where(FileRecord.snapshot_id == snapshot_id)
+            .order_by(FileRecord.path)
+        ).all()
+    )
+    validation = validate_repository_story(story, files=files)
+    if not validation.valid:
+        story = story.model_copy(
+            update={
+                "limitations": [
+                    *story.limitations,
+                    *[f"Repository Story 검증: {issue}" for issue in validation.issues],
+                ]
+            }
+        )
+    stored = write_navigation_artifacts(
+        db,
+        snapshot_id=snapshot_id,
+        commit_sha=commit_sha,
+        artifacts=[
+            ArtifactWrite(
+                artifact_type="repository_story",
+                artifact_key="overview",
+                artifact_version=REPOSITORY_STORY_VERSION,
+                payload=story,
+                generation_metadata={
+                    "architecture_graph_version": ARCHITECTURE_GRAPH_VERSION,
+                    "project_map_version": PROJECT_MAP_VERSION,
+                    "feature_flow_version": FEATURE_FLOW_VERSION,
+                    "validation_valid": validation.valid,
+                    "evidence_validity": validation.evidence_validity,
+                    "feature_mapping_coverage": validation.feature_mapping_coverage,
+                    "generic_responsibility_ratio": (validation.generic_responsibility_ratio),
+                },
+            )
+        ],
+    )
+    response.headers["X-Navigation-Cache"] = "MISS"
+    response.headers["X-Navigation-Cache-Write"] = "STORED" if stored else "SKIPPED"
+    response.headers["X-Navigation-Artifact-Version"] = REPOSITORY_STORY_VERSION
+    return story
 
 
 @router.post(

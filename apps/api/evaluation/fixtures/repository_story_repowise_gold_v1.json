@@ -1,0 +1,58 @@
+{
+  "name": "RepoWiseAI repository story gold v1",
+  "repository": "leeseungmin1013/RepoWiseAI",
+  "roles": [
+    {
+      "id": "role_experience",
+      "evidence_paths": ["apps/web/src/components/RepositoryWorkbench.tsx"]
+    },
+    {
+      "id": "role_request_gateway",
+      "evidence_paths": ["apps/api/app/api/repositories.py"]
+    },
+    {
+      "id": "role_analysis",
+      "evidence_paths": ["apps/api/app/workers/repository_analysis.py"]
+    },
+    {
+      "id": "role_understanding",
+      "evidence_paths": ["apps/api/app/navigation/feature_flow.py"]
+    },
+    {
+      "id": "role_learning",
+      "evidence_paths": ["apps/api/app/api/learning.py"]
+    },
+    {
+      "id": "role_application",
+      "evidence_paths": ["apps/api/app/services/github.py"]
+    },
+    {
+      "id": "role_persistence",
+      "evidence_paths": ["apps/api/app/models.py"]
+    },
+    {
+      "id": "role_runtime",
+      "evidence_paths": ["apps/api/app/core/config.py"]
+    },
+    {
+      "id": "role_shared",
+      "evidence_paths": ["apps/web/src/lib/api.ts"]
+    }
+  ],
+  "expected_feature_ids": [
+    "flow_e22ba27a2847281cd6ee",
+    "flow_2b92293777d30ad11c15",
+    "flow_7caf29b5ae21796c1b64"
+  ],
+  "thresholds": {
+    "role_recall": 0.8,
+    "verified_role_precision": 0.9,
+    "purpose_evidence_validity": 1.0,
+    "role_evidence_validity": 1.0,
+    "role_evidence_coverage": 1.0,
+    "feature_to_role_mapping_coverage": 0.9,
+    "narrative_field_coverage": 1.0,
+    "generic_responsibility_ratio": 0.0,
+    "overview_role_count_compliance": 1.0
+  }
+}

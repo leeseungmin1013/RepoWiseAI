@@ -24,7 +24,7 @@ from reportlab.platypus import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "PROJECT_PLAN.md"
+SOURCE = ROOT / "docs" / "plans" / "01_2026-07-06_PROJECT_PLAN.md"
 OUTPUT = ROOT / "output" / "pdf" / "RepoWiseAI_Project_Plan.pdf"
 TMP_DIR = ROOT / "tmp" / "pdfs"
 

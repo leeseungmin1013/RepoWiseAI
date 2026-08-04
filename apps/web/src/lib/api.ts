@@ -231,6 +231,56 @@ export type ArchitectureGraph = {
   limitations: string[];
 };
 
+export type RepositoryStoryPurpose = {
+  one_liner: string;
+  primary_audience: string;
+  primary_outcome: string;
+  how_it_works: string[];
+  confidence: ProjectMapConfidence;
+  evidence: ProjectMapEvidence[];
+};
+
+export type RepositoryStoryRole = {
+  id: string;
+  display_name: string;
+  role_summary: string;
+  why_it_exists: string;
+  contribution_to_goal: string;
+  receives: string[];
+  produces: string[];
+  member_node_ids: string[];
+  member_file_ids: string[];
+  capability_ids: string[];
+  feature_flow_ids: string[];
+  confidence: ProjectMapConfidence;
+  evidence: ProjectMapEvidence[];
+};
+
+export type RepositoryStoryConnection = {
+  id: string;
+  source: string;
+  target: string;
+  label: string;
+  description: string;
+  relation_types: string[];
+  feature_flow_ids: string[];
+  confidence: ProjectMapConfidence;
+  evidence: ProjectMapEvidence[];
+};
+
+export type RepositoryStory = {
+  repository_name: string;
+  snapshot_id: string;
+  commit_sha: string;
+  analysis_version: string;
+  purpose: RepositoryStoryPurpose;
+  roles: RepositoryStoryRole[];
+  connections: RepositoryStoryConnection[];
+  features: FeatureFlowSummary[];
+  implementation_graph: ArchitectureGraph;
+  limitations: string[];
+};
+
 export type ArchitectureGraphDiff = {
   repository_name: string;
   base_snapshot_id: string;
@@ -919,6 +969,8 @@ export const api = {
         featureFlowId ? `?feature_flow_id=${encodeURIComponent(featureFlowId)}` : ""
       }`,
     ),
+  getRepositoryStory: (snapshotId: string) =>
+    request<RepositoryStory>(`/snapshots/${snapshotId}/repository-story`),
   getArchitectureGraphDiff: (snapshotId: string, baseSnapshotId: string) =>
     request<ArchitectureGraphDiff>(
       `/snapshots/${snapshotId}/architecture-graph/diff?base_snapshot_id=${encodeURIComponent(

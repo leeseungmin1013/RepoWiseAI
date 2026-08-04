@@ -181,6 +181,56 @@ class ArchitectureGraphResponse(BaseModel):
     limitations: list[str]
 
 
+class RepositoryStoryPurpose(BaseModel):
+    one_liner: str
+    primary_audience: str
+    primary_outcome: str
+    how_it_works: list[str] = Field(min_length=1, max_length=5)
+    confidence: ArchitectureConfidence
+    evidence: list[ArchitectureGraphEvidence] = Field(min_length=1)
+
+
+class RepositoryStoryRole(BaseModel):
+    id: str
+    display_name: str
+    role_summary: str
+    why_it_exists: str
+    contribution_to_goal: str
+    receives: list[str]
+    produces: list[str]
+    member_node_ids: list[str] = Field(min_length=1)
+    member_file_ids: list[str] = Field(min_length=1)
+    capability_ids: list[str]
+    feature_flow_ids: list[str]
+    confidence: ArchitectureConfidence
+    evidence: list[ArchitectureGraphEvidence] = Field(min_length=1)
+
+
+class RepositoryStoryConnection(BaseModel):
+    id: str
+    source: str
+    target: str
+    label: str
+    description: str
+    relation_types: list[str] = Field(min_length=1)
+    feature_flow_ids: list[str]
+    confidence: ArchitectureConfidence
+    evidence: list[ArchitectureGraphEvidence] = Field(min_length=1)
+
+
+class RepositoryStoryResponse(BaseModel):
+    repository_name: str
+    snapshot_id: str
+    commit_sha: str
+    analysis_version: str
+    purpose: RepositoryStoryPurpose
+    roles: list[RepositoryStoryRole] = Field(min_length=1, max_length=12)
+    connections: list[RepositoryStoryConnection]
+    features: list["FeatureFlowSummary"]
+    implementation_graph: ArchitectureGraphResponse
+    limitations: list[str]
+
+
 class ArchitectureGraphDiffNode(BaseModel):
     path: str
     status: Literal["added", "removed", "changed"]

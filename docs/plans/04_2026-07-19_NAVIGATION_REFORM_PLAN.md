@@ -78,7 +78,7 @@ RepoWise AI를 처음부터 다시 만들 필요는 없다. 현재 구현은 저
    
    `learning/curriculum.py`의 `feature_flow` module은 중요도가 높은 심볼을 여러 개 고르는 방식이다. 한 사용자 행동이 여러 파일을 거쳐 결과에 도달하는 연결된 end-to-end flow는 아니다. 사용자는 나뭇가지를 추천 순서대로 볼 뿐 여전히 숲의 길을 얻지 못한다.
 
-   기존 `IMPLEMENTATION_PLAN.md`에는 Project Map과 feature cluster 탐색이 이미 설계되어 있다. 이번 개혁은 원래 비전을 뒤집는 것이 아니라, 구현 과정에서 빠진 의미 계층을 실제 기본 화면과 데이터 모델로 복구하는 작업이다.
+   기존 [구현 계획서](02_2026-07-06_IMPLEMENTATION_PLAN.md)에는 Project Map과 feature cluster 탐색이 이미 설계되어 있다. 이번 개혁은 원래 비전을 뒤집는 것이 아니라, 구현 과정에서 빠진 의미 계층을 실제 기본 화면과 데이터 모델로 복구하는 작업이다.
 
 5. **막힌 뒤의 도움도 문법과 자료 쪽으로 너무 빨리 내려간다.**
    

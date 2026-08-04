@@ -4,7 +4,7 @@ RepoWise AI는 GitHub 코드베이스를 실제 코드 근거와 검증된 학�
 
 ## 현재 구현 상태
 
-다섯 번째 MVP vertical slice인 Concept Graph 기반 적응형 학습과 숙련도 추적까지 동작합니다.
+Repository Structure 중심 탐색, 구조·기능·코드·변경 영향 연결과 Concept Graph 기반 적응형 학습까지 동작합니다.
 
 - public GitHub repository URL 등록
 - branch와 commit SHA가 고정된 repository snapshot
@@ -47,10 +47,13 @@ RepoWise AI는 GitHub 코드베이스를 실제 코드 근거와 검증된 학�
 - 보충 학습 return stack과 원래 lesson 복귀
 - 현재 module·lesson·concept를 검색 query와 OpenAI Structured Output prompt에 주입
 - 데스크톱·모바일 반응형 작업공간
-- Project Map 안에서 Client·Server·Domain·Data 경계를 보여 주는 bounded Repository Structure Map
-- 기능별 정상·실패 흐름 오버레이, 코드 근거 이동, Change Brief 영향 강조
+- 분석 완료 직후 저장소 목적과 핵심 역할을 자연어로 설명하는 Repository Story
+- 파일 이름 대신 사용자·시스템 역할로 먼저 보여 주고 구현 파일로 점진적으로 펼치는 Repository Structure
+- 역할별 `왜 필요한가`, `전체 목적 기여`, 입력·결과와 실제 코드 line 근거
+- 기능별 정상·실패 흐름 오버레이, Code Focus 이동, Change Brief 영향 강조와 구조 학습 연결
+- 데스크톱 inspector와 모바일 bottom sheet를 포함한 일반 웹 문서형 반응형 레이아웃
 - Python/FastAPI·DB SDK·cross-file request helper를 포함한 `semantic-ts-v2` 관계 분석
-- Architecture gold 평가 CLI, commit 구조 diff, PNG·Mermaid export
+- Architecture/Repository Story gold 평가 CLI, commit 구조 diff, PNG·Mermaid export
 
 다음 vertical slice는 공식 문서 freshness 검증, 최근 질문·활동·보충 경로 복구, 학습 품질 평가 fixture와 운영 관측성 강화에 집중합니다. 기존 Guided Code Tour API는 호환성을 위해 유지하지만 기본 UI는 Adaptive Learning Journey를 사용합니다.
 
@@ -78,55 +81,194 @@ OPENAI_API_KEY=your_project_key
 
 임베딩 공간은 snapshot별로 고정됩니다. 키를 설정하거나 `EMBEDDING_MODEL`을 바꾼 뒤에는 저장소를 다시 분석해 새 snapshot을 만들어야 semantic vector 검색에 새 모델이 반영됩니다. 기존 local snapshot은 exact·full-text 검색을 계속 사용할 수 있습니다.
 
-## 로컬 실행
+## 로컬 전체 스택 실행
 
-필수 도구:
+아래 명령은 Windows PowerShell과 repository root에서 실행하는 것을 기준으로 합니다. 전체 스택은 다음 프로세스로 구성됩니다.
+
+| 구성 요소 | 역할 | 주소 또는 포트 | 실행 방식 |
+| --- | --- | --- | --- |
+| PostgreSQL + pgvector | 저장소 분석 결과, 학습 상태, vector 저장 | `localhost:5432` | Docker Compose |
+| Redis | RQ 작업 queue | `localhost:6379` | Docker Compose |
+| FastAPI | REST API와 OpenAPI 문서 | `http://localhost:8000` | `pnpm dev:api` |
+| RQ worker | 저장소 분석과 deep learning task 처리 | 별도 포트 없음 | `pnpm dev:worker` |
+| Next.js | 사용자 웹 UI | `http://localhost:3000` | `pnpm dev:web` |
+
+### 1. 필수 도구 확인
+
+다음 도구가 필요합니다.
 
 - Docker Desktop
-- Node.js와 pnpm
-- Python 3.12를 설치할 수 있는 `uv`
+- Node.js와 pnpm 11
+- Python 3.12를 설치하고 가상환경을 관리할 수 있는 `uv`
 
-환경 파일을 준비합니다.
+설치 여부와 Docker engine 상태를 확인합니다.
 
 ```powershell
-Copy-Item .env.example .env
-Copy-Item apps/web/.env.local.example apps/web/.env.local
+docker --version
+docker compose version
+node --version
+pnpm --version
+uv --version
+docker info
 ```
 
-PostgreSQL과 Redis를 시작합니다.
+`docker info`가 engine 연결 오류를 출력하면 Docker Desktop을 먼저 실행하고 engine이 준비될 때까지 기다립니다. 일부 Windows 환경에서 `docker compose`가 인식되지 않고 `docker-compose`만 제공되는 경우에는 이 문서의 `docker compose`를 `docker-compose`로 바꾸어 실행하면 됩니다.
+
+### 2. 환경 파일 준비
+
+최초 1회만 example 파일을 복사합니다. 아래 명령은 이미 존재하는 `.env`와 `.env.local`을 덮어쓰지 않습니다.
+
+```powershell
+if (!(Test-Path .env)) {
+  Copy-Item .env.example .env
+}
+
+if (!(Test-Path apps/web/.env.local)) {
+  Copy-Item apps/web/.env.local.example apps/web/.env.local
+}
+```
+
+기본 설정은 다음 로컬 주소를 사용합니다.
+
+```dotenv
+# .env
+DATABASE_URL=postgresql+psycopg://repowise:repowise@localhost:5432/repowise
+REDIS_URL=redis://localhost:6379/0
+
+# apps/web/.env.local
+NEXT_PUBLIC_API_URL=http://localhost:8000/api
+```
+
+`OPENAI_API_KEY`는 선택 사항입니다. 키가 없어도 local hash vector와 deterministic fallback으로 기본 검색·citation 흐름을 검토할 수 있습니다. 키를 사용할 때는 `.env`의 `OPENAI_API_KEY`에만 저장하고 환경 파일을 Git에 commit하지 않습니다.
+
+### 3. 의존성 설치
+
+최초 실행, lockfile 변경 또는 dependency 변경 후 실행합니다.
+
+```powershell
+pnpm install --frozen-lockfile
+uv sync --project apps/api
+```
+
+### 4. PostgreSQL과 Redis 시작
+
+인프라 컨테이너는 background에서 실행합니다.
 
 ```powershell
 docker compose up -d postgres redis
+docker compose ps
 ```
 
-API 의존성과 DB schema를 준비합니다.
+`docker compose ps`에서 두 서비스가 모두 `healthy`가 될 때까지 기다립니다. 처음 실행하면 container image를 내려받아 시간이 더 걸릴 수 있습니다.
+
+### 5. DB migration 적용
+
+PostgreSQL이 `healthy`가 된 뒤 현재 schema까지 migration합니다. 이미 적용된 migration은 다시 실행해도 안전합니다.
 
 ```powershell
-uv sync --project apps/api
 pnpm db:migrate
 ```
 
-API와 worker를 각각 실행합니다.
+### 6. API, worker, 웹 실행
+
+개발 서버 세 개는 계속 실행되는 프로세스이므로 각각 별도 PowerShell 터미널에서 실행합니다.
+
+터미널 1 — FastAPI:
 
 ```powershell
-# repository root
 pnpm dev:api
+```
 
-# repository root, 별도 터미널
+터미널 2 — RQ worker:
+
+```powershell
 pnpm dev:worker
 ```
 
-웹 앱을 실행합니다.
+worker가 정상적으로 Redis에 연결되면 `Listening on repowise-deep-learning, repowise-analysis`와 비슷한 메시지가 표시됩니다. worker를 실행하지 않으면 웹과 API는 열리지만 새 저장소 분석 작업은 처리되지 않습니다.
+
+터미널 3 — Next.js:
 
 ```powershell
-# repository root
-pnpm install
 pnpm dev:web
 ```
+
+Next.js가 `Ready`를 출력하면 다음 주소에서 검토할 수 있습니다.
 
 - Web: <http://localhost:3000>
 - API docs: <http://localhost:8000/docs>
 - API health: <http://localhost:8000/api/health>
+
+첫 웹 요청에서는 Next.js가 페이지를 compile하므로 응답까지 몇 초 걸릴 수 있습니다.
+
+### 7. 실행 상태 확인
+
+PowerShell에서 API, DB, Redis 상태를 한 번에 확인합니다.
+
+```powershell
+$health = Invoke-RestMethod http://localhost:8000/api/health
+$health | ConvertTo-Json -Depth 4
+docker compose ps
+```
+
+정상적인 API 응답은 `status`, `checks.database`, `checks.queue`가 모두 `ready`입니다.
+
+```json
+{
+  "status": "ready",
+  "version": "0.1.0",
+  "checks": {
+    "database": "ready",
+    "queue": "ready"
+  }
+}
+```
+
+포트 충돌이나 예상하지 않은 프로세스가 의심되면 다음 명령으로 확인합니다.
+
+```powershell
+Get-NetTCPConnection -State Listen |
+  Where-Object LocalPort -In 3000, 5432, 6379, 8000 |
+  Select-Object LocalAddress, LocalPort, OwningProcess
+```
+
+### 평소 재실행 순서
+
+의존성과 migration이 이미 준비된 개발 환경에서는 다음 순서만 반복하면 됩니다.
+
+1. Docker Desktop을 실행합니다.
+2. `docker compose up -d postgres redis`를 실행합니다.
+3. 별도 터미널에서 `pnpm dev:api`, `pnpm dev:worker`, `pnpm dev:web`을 실행합니다.
+4. <http://localhost:8000/api/health>와 <http://localhost:3000>을 확인합니다.
+
+### 종료와 데이터 초기화
+
+API, worker, 웹 터미널에서는 각각 `Ctrl+C`로 프로세스를 종료합니다. PostgreSQL과 Redis를 중지하려면 다음 명령을 실행합니다.
+
+```powershell
+docker compose stop
+```
+
+컨테이너와 Compose network를 정리하되 DB와 Redis volume 데이터는 보존하려면 다음 명령을 사용합니다.
+
+```powershell
+docker compose down
+```
+
+로컬 DB와 Redis 데이터를 완전히 초기화해야 할 때만 `-v`를 사용합니다. 이 명령은 저장된 repository snapshot과 학습 상태를 복구할 수 없게 삭제합니다.
+
+```powershell
+docker compose down -v
+```
+
+### 자주 발생하는 문제
+
+- `docker compose`가 unknown command인 경우: `docker-compose` 명령을 사용합니다.
+- Docker API 또는 named pipe 연결 오류가 나는 경우: Docker Desktop을 실행하고 `docker info`가 성공하는지 확인합니다.
+- API health에서 database 또는 queue가 ready가 아닌 경우: `docker compose ps`의 health와 `.env`의 `DATABASE_URL`, `REDIS_URL`을 확인한 뒤 API를 재시작합니다.
+- 웹은 열리지만 API 요청이 실패하는 경우: `apps/web/.env.local`의 `NEXT_PUBLIC_API_URL`을 확인하고 Next.js를 재시작합니다. Next.js는 시작할 때 환경 파일을 읽습니다.
+- 저장소 분석이 대기 상태에 머무는 경우: worker 터미널이 실행 중인지, Redis가 `healthy`인지 확인합니다.
+- `5432`, `6379`, `8000`, `3000` 포트가 이미 사용 중인 경우: 위의 `Get-NetTCPConnection` 명령으로 점유 프로세스를 확인하거나 `.env`, Compose port, 실행 명령을 함께 변경합니다.
 
 ## 검증
 
@@ -137,10 +279,14 @@ pnpm lint:web
 pnpm test:web
 pnpm build:web
 pnpm eval:retrieval --fixture evals/retrieval/p-map.json
+pnpm eval:story
 ```
 
 ## 프로젝트 문서
 
-- [전체 프로젝트 기획서](PROJECT_PLAN.md)
-- [구현 계획서](IMPLEMENTATION_PLAN.md)
+- [프로젝트 종합 현황과 남은 구현 계획](docs/PROJECT_OVERVIEW.md)
+- [시간순 문서 인덱스](docs/README.md)
+- [전체 프로젝트 기획서](docs/plans/01_2026-07-06_PROJECT_PLAN.md)
+- [구현 계획서](docs/plans/02_2026-07-06_IMPLEMENTATION_PLAN.md)
+- [Repository Structure First UI 개편 계획과 구현 결과](docs/plans/07_2026-07-30_REPOSITORY_STRUCTURE_FIRST_UI_REDESIGN_PLAN.md)
 - [프로젝트 기획서 PDF](output/pdf/RepoWiseAI_Project_Plan.pdf)

@@ -1,7 +1,7 @@
 # RepoWise AI 저장소 내비게이션 개혁 상세 구현 계획서
 
 - 작성일: 2026년 7월 19일
-- 상위 기획: `NAVIGATION_REFORM_PLAN.md`
+- 상위 기획: [`04_2026-07-19_NAVIGATION_REFORM_PLAN.md`](04_2026-07-19_NAVIGATION_REFORM_PLAN.md)
 - 구현 기준: 현재 `main` 작업 트리와 기존 Adaptive Learning Journey 보존
 - 현재 실행 범위: Tranche A — Map-first vertical slice
 

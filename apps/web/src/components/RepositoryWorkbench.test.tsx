@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   createLearnerProfile: vi.fn(),
   getProjectMap: vi.fn(),
   getArchitectureGraph: vi.fn(),
+  getRepositoryStory: vi.fn(),
   getFeatureFlows: vi.fn(),
   getFeatureFlow: vi.fn(),
   createCodeExplanation: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock("@/lib/api", () => ({
     createLearnerProfile: mocks.createLearnerProfile,
     getProjectMap: mocks.getProjectMap,
     getArchitectureGraph: mocks.getArchitectureGraph,
+    getRepositoryStory: mocks.getRepositoryStory,
     getFeatureFlows: mocks.getFeatureFlows,
     getFeatureFlow: mocks.getFeatureFlow,
     createCodeExplanation: mocks.createCodeExplanation,
@@ -81,6 +83,70 @@ vi.mock("./ArchitectureMapPanel", () => ({
   ArchitectureMapPanel: ({ graph, loading }: { graph: { snapshot_id: string } | null; loading: boolean }) => (
     <div data-testid="architecture-map">
       {loading ? "loading" : graph?.snapshot_id ?? "empty"}
+    </div>
+  ),
+}));
+
+vi.mock("./RepositoryStoryPage", () => ({
+  RepositoryStoryPage: ({
+    story,
+    loading,
+    onOpenEvidence,
+    onOpenDependencyGraph,
+    onStartLearning,
+    onSelectFlow,
+  }: {
+    story: {
+      snapshot_id: string;
+      purpose: { one_liner: string };
+      roles: Array<{
+        display_name: string;
+        evidence: Array<{
+          file_id: string;
+          path: string;
+          start_line: number;
+          end_line: number;
+          reason: string;
+        }>;
+      }>;
+      features: Array<{ id: string; title: string }>;
+    } | null;
+    loading: boolean;
+    onOpenEvidence: (evidence: {
+      file_id: string;
+      path: string;
+      start_line: number;
+      end_line: number;
+      reason: string;
+    }) => void;
+    onOpenDependencyGraph: () => void;
+    onStartLearning: () => void;
+    onSelectFlow: (flowId: string | null) => void;
+  }) => (
+    <div data-testid="repository-story">
+      {loading ? "loading" : story?.purpose.one_liner ?? "empty"}
+      {story?.roles.map((role) => (
+        <div key={role.display_name}>
+          <span>{role.display_name}</span>
+          {role.evidence.map((item) => (
+            <button
+              key={item.file_id}
+              aria-label={`근거 코드 열기: ${role.display_name}, ${item.path}`}
+              onClick={() => onOpenEvidence(item)}
+              type="button"
+            >
+              근거
+            </button>
+          ))}
+        </div>
+      ))}
+      {story?.features.map((feature) => (
+        <button key={feature.id} onClick={() => onSelectFlow(feature.id)} type="button">
+          {feature.title} 구조도에 표시
+        </button>
+      ))}
+      <button onClick={onOpenDependencyGraph} type="button">원본 코드 탐색</button>
+      <button onClick={onStartLearning} type="button">깊이 배우기 선택</button>
     </div>
   ),
 }));
@@ -385,7 +451,7 @@ beforeEach(() => {
   });
   mocks.createLearnerProfile.mockResolvedValue(profile);
   mocks.getProjectMap.mockResolvedValue(projectMap);
-  mocks.getArchitectureGraph.mockResolvedValue({
+  const implementationGraph = {
     repository_name: "example/repository",
     snapshot_id: snapshot.id,
     commit_sha: snapshot.commit_sha,
@@ -394,6 +460,57 @@ beforeEach(() => {
     groups: [],
     nodes: [],
     edges: [],
+    limitations: [],
+  };
+  mocks.getArchitectureGraph.mockResolvedValue(implementationGraph);
+  mocks.getRepositoryStory.mockResolvedValue({
+    repository_name: projectMap.repository_name,
+    snapshot_id: snapshot.id,
+    commit_sha: snapshot.commit_sha,
+    analysis_version: "repository-story-v1",
+    purpose: {
+      one_liner: projectMap.summary,
+      primary_audience: "저장소를 이해하려는 사용자",
+      primary_outcome: "구조와 기능 흐름을 이해합니다.",
+      how_it_works: ["1. 사용자 작업 공간", "2. 구조와 기능 흐름 구성"],
+      confidence: "verified",
+      evidence: [evidence],
+    },
+    roles: [
+      {
+        id: "role-map",
+        display_name: "프로젝트 지도 보기",
+        role_summary: "저장소의 큰 그림을 보여줍니다.",
+        why_it_exists: "코드보다 목적을 먼저 이해하기 위해 필요합니다.",
+        contribution_to_goal: "전체 구조를 설명합니다.",
+        receives: ["snapshot"],
+        produces: ["project map"],
+        member_node_ids: ["node-map"],
+        member_file_ids: [evidence.file_id],
+        capability_ids: ["project-map"],
+        feature_flow_ids: ["flow-project-map"],
+        confidence: "verified",
+        evidence: [evidence],
+      },
+      {
+        id: "role-flow",
+        display_name: "기능 흐름 열기",
+        role_summary: "실행 흐름을 보여줍니다.",
+        why_it_exists: "기능의 순서를 이해하기 위해 필요합니다.",
+        contribution_to_goal: "코드 연결을 설명합니다.",
+        receives: ["feature"],
+        produces: ["flow"],
+        member_node_ids: ["node-flow"],
+        member_file_ids: [secondEvidence.file_id],
+        capability_ids: ["feature-flow"],
+        feature_flow_ids: ["flow-project-map"],
+        confidence: "verified",
+        evidence: [secondEvidence],
+      },
+    ],
+    connections: [],
+    features: featureFlowCatalog.flows,
+    implementation_graph: implementationGraph,
     limitations: [],
   });
   mocks.getFeatureFlows.mockResolvedValue(featureFlowCatalog);
@@ -429,62 +546,50 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("RepositoryWorkbench map-first entry", () => {
-  it("loads the project map without starting assessment or explorer APIs", async () => {
+  it("loads Repository Structure without starting assessment or explorer APIs", async () => {
     render(<RepositoryWorkbench />);
 
-    expect(
-      await screen.findByText("사용자가 프로젝트의 큰 그림부터 이해하도록 돕는 저장소입니다."),
-    ).toBeTruthy();
-    expect(mocks.getProjectMap).toHaveBeenCalledWith(snapshot.id);
+    await waitFor(() =>
+      expect(screen.getByTestId("repository-story").textContent).toContain(projectMap.summary),
+    );
+    expect(mocks.getRepositoryStory).toHaveBeenCalledWith(snapshot.id);
     expect(mocks.createAssessmentSession).not.toHaveBeenCalled();
     expect(mocks.getFeatureFlows).not.toHaveBeenCalled();
     expect(mocks.getTree).not.toHaveBeenCalled();
     expect(mocks.getGraph).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "프로젝트 지도" }).getAttribute("aria-pressed"))
+    expect(screen.getByRole("button", { name: "Repository Structure" }).getAttribute("aria-pressed"))
       .toBe("true");
   });
 
-  it("loads the architecture graph only when the user opens the structure view", async () => {
+  it("uses the story implementation graph without a second architecture request", async () => {
     render(<RepositoryWorkbench />);
-    await waitFor(() => expect(mocks.getProjectMap).toHaveBeenCalledWith(snapshot.id));
 
+    await waitFor(() => expect(mocks.getRepositoryStory).toHaveBeenCalledWith(snapshot.id));
+    await waitFor(() =>
+      expect(screen.getByTestId("repository-story").textContent).toContain(projectMap.summary),
+    );
     expect(mocks.getArchitectureGraph).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "구조도" }));
-
-    await waitFor(() => expect(mocks.getArchitectureGraph).toHaveBeenCalledWith(snapshot.id));
-    expect(screen.getByTestId("architecture-map").textContent).toBe(snapshot.id);
-    expect(mocks.getFeatureFlows).toHaveBeenCalledWith(snapshot.id);
+    expect(mocks.getFeatureFlows).not.toHaveBeenCalled();
     expect(mocks.getTree).not.toHaveBeenCalled();
     expect(mocks.getGraph).not.toHaveBeenCalled();
   });
 
-  it("loads flow catalog and detail without assessment or explorer, then opens exact evidence", async () => {
+  it("loads a feature flow from Repository Structure, then opens exact evidence", async () => {
     render(<RepositoryWorkbench />);
     await screen.findByText("프로젝트 지도 보기");
 
-    fireEvent.click(screen.getByRole("button", { name: "기능 흐름" }));
-
-    expect(
-      await screen.findByRole("heading", { name: "어떤 사용자 행동을 따라가 볼까요?" }),
-    ).toBeTruthy();
-    expect(mocks.getFeatureFlows).toHaveBeenCalledWith(snapshot.id);
-    expect(mocks.createAssessmentSession).not.toHaveBeenCalled();
-    expect(mocks.getTree).not.toHaveBeenCalled();
-    expect(mocks.getGraph).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "기능 흐름" }).getAttribute("aria-current"))
-      .toBe("page");
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "프로젝트 지도 조회 흐름 따라가기" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: /구조도에 표시/ }));
     await waitFor(() =>
       expect(mocks.getFeatureFlow).toHaveBeenCalledWith(snapshot.id, "flow-project-map"),
     );
-    expect(await screen.findByRole("heading", { name: "정상 흐름" })).toBeTruthy();
     expect(mocks.createAssessmentSession).not.toHaveBeenCalled();
     expect(mocks.getTree).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: /지도 API 요청 수신/ }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: `근거 코드 열기: 프로젝트 지도 보기, ${evidence.path}`,
+      }),
+    );
     await waitFor(() => expect(mocks.getFile).toHaveBeenCalledWith(snapshot.id, evidence.file_id));
     expect(mocks.getSymbols).toHaveBeenCalledWith(snapshot.id, evidence.file_id);
     expect(screen.getByTestId("opened-highlight").textContent).toBe(
@@ -502,7 +607,7 @@ describe("RepositoryWorkbench map-first entry", () => {
           end_line: evidence.end_line,
         },
         "minimum",
-        { featureFlowId: featureFlowDetail.id, flowStepId: "flow-step-1" },
+        undefined,
       ),
     );
     expect(screen.getByTestId("code-focus-state").textContent).toBe(
@@ -510,31 +615,25 @@ describe("RepositoryWorkbench map-first entry", () => {
     );
   });
 
-  it("cancels detail loading when the user leaves flow mode mid-request", async () => {
+  it("does not restore stale feature detail after leaving Repository Structure", async () => {
     const pendingDetail = deferred<typeof featureFlowDetail>();
     mocks.getFeatureFlow.mockReturnValueOnce(pendingDetail.promise);
     render(<RepositoryWorkbench />);
     await screen.findByText("프로젝트 지도 보기");
 
-    fireEvent.click(screen.getByRole("button", { name: "기능 흐름" }));
-    await screen.findByRole("heading", { name: "어떤 사용자 행동을 따라가 볼까요?" });
-    fireEvent.click(
-      screen.getByRole("button", { name: "프로젝트 지도 조회 흐름 따라가기" }),
+    fireEvent.click(screen.getByRole("button", { name: /구조도에 표시/ }));
+    await waitFor(() =>
+      expect(mocks.getFeatureFlow).toHaveBeenCalledWith(snapshot.id, "flow-project-map"),
     );
-    expect(await screen.findByText("선택한 흐름을 펼치고 있어요")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "프로젝트 지도" }));
-    fireEvent.click(screen.getByRole("button", { name: "기능 흐름" }));
-    expect(
-      await screen.findByRole("heading", { name: "어떤 사용자 행동을 따라가 볼까요?" }),
-    ).toBeTruthy();
-    expect(screen.queryByText("선택한 흐름을 펼치고 있어요")).toBeNull();
+    fireEvent.click(screen.getAllByRole("button", { name: "원본 코드 탐색" })[0]);
+    await waitFor(() => expect(screen.queryByTestId("repository-story")).toBeNull());
 
     await act(async () => {
       pendingDetail.resolve(featureFlowDetail);
       await pendingDetail.promise;
     });
-    expect(screen.queryByRole("heading", { name: "정상 흐름" })).toBeNull();
+    expect(screen.queryByTestId("repository-story")).toBeNull();
   });
 
   it("opens Project Map evidence with its exact line range", async () => {
@@ -702,7 +801,9 @@ describe("RepositoryWorkbench map-first entry", () => {
         "",
       ),
     );
-    await waitFor(() => expect(mocks.getProjectMap).toHaveBeenCalledWith(replacementSnapshot.id));
+    await waitFor(() =>
+      expect(mocks.getRepositoryStory).toHaveBeenCalledWith(replacementSnapshot.id),
+    );
 
     fireEvent.click(screen.getAllByRole("button", { name: "원본 코드 탐색" })[0]);
     expect((await screen.findByTestId("opened-file")).textContent).toBe("none");

@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.db import SessionLocal, get_db
 from app.models import ChatSession, DeepTask, FileRecord, LearningSession
 from app.queue import cancel_deep_task_job, enqueue_deep_task
@@ -23,6 +24,7 @@ from app.schemas import (
     DeepTaskResponse,
     ResearchMaterialsResponse,
 )
+from app.services.usage import UsageContext, UsageService
 
 router = APIRouter(tags=["deep-learning"])
 SessionDep = Annotated[Session, Depends(get_db)]
@@ -95,6 +97,7 @@ def _enqueue_task(db: Session, task: DeepTask) -> None:
         task.error_detail = "심층 작업 대기열을 사용할 수 없습니다."
         task.finished_at = _utc_now()
         db.commit()
+        UsageService().release(db, getattr(task, "cost_reservation_id", None))
         raise HTTPException(status_code=503, detail="Deep task queue is unavailable") from exc
 
 
@@ -140,6 +143,8 @@ def create_deep_task(
     selection = _validated_selection(db, learning_session.snapshot_id, requested_selection)
     task = DeepTask(
         learning_session_id=learning_session.id,
+        user_id=getattr(chat_session, "user_id", None),
+        organization_id=getattr(chat_session, "organization_id", None),
         chat_session_id=chat_session.id,
         kind=payload.kind,
         modality=payload.modality,
@@ -152,6 +157,21 @@ def create_deep_task(
         progress=0,
         message="심층 작업이 대기열에 등록되었습니다.",
     )
+    if getattr(task, "organization_id", None):
+        reservation = UsageService().reserve(
+            db,
+            context=UsageContext(
+                organization_id=getattr(task, "organization_id", None),
+                user_id=getattr(task, "user_id", None),
+                feature="research_web_search"
+                if task.kind == "research_materials"
+                else "deep_explanation",
+                request_id=task.id,
+                idempotency_key=f"deep-task:{task.id}",
+            ),
+            estimated_cost_micro_usd=get_settings().deep_task_reservation_micro_usd,
+        )
+        task.cost_reservation_id = reservation.id if reservation else None
     db.add(task)
     try:
         db.commit()
@@ -229,6 +249,8 @@ def create_navigation_deep_task(
     chat_session.current_selection = selection
     task = DeepTask(
         learning_session_id=None,
+        user_id=getattr(chat_session, "user_id", None),
+        organization_id=getattr(chat_session, "organization_id", None),
         chat_session_id=chat_session.id,
         kind="impact_analysis",
         modality=payload.modality,
@@ -244,6 +266,21 @@ def create_navigation_deep_task(
         progress=0,
         message="변경 영향 분석이 대기열에 등록되었습니다.",
     )
+    if getattr(task, "organization_id", None):
+        reservation = UsageService().reserve(
+            db,
+            context=UsageContext(
+                organization_id=getattr(task, "organization_id", None),
+                user_id=getattr(task, "user_id", None),
+                feature="research_web_search"
+                if task.kind == "research_materials"
+                else "deep_explanation",
+                request_id=task.id,
+                idempotency_key=f"deep-task:{task.id}",
+            ),
+            estimated_cost_micro_usd=get_settings().deep_task_reservation_micro_usd,
+        )
+        task.cost_reservation_id = reservation.id if reservation else None
     db.add(task)
     try:
         db.commit()
@@ -296,6 +333,7 @@ def cancel_deep_task(task_id: str, db: SessionDep):
     task.error_detail = None
     task.finished_at = _utc_now()
     db.commit()
+    UsageService().release(db, getattr(task, "cost_reservation_id", None))
     if task.rq_job_id:
         cancel_deep_task_job(task.rq_job_id)
     return _task_response(task)

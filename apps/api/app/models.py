@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Computed,
     DateTime,
@@ -53,6 +54,17 @@ class RepositorySnapshot(Base):
     )
     branch: Mapped[str | None] = mapped_column(String(255), nullable=True)
     commit_sha: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    analysis_fingerprint: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    base_snapshot_id: Mapped[str | None] = mapped_column(
+        ForeignKey("repository_snapshots.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    reuse_mode: Mapped[str] = mapped_column(String(32), default="full", index=True)
+    manifest_hash: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    change_summary: Mapped[dict] = mapped_column(
+        JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ready_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
     parser_version: Mapped[str] = mapped_column(String(32), default="tree-sitter-v1")
     index_version: Mapped[str] = mapped_column(String(32), default="structure-v1")
@@ -70,7 +82,9 @@ class RepositorySnapshot(Base):
 
     repository: Mapped[Repository] = relationship(back_populates="snapshots")
     jobs: Mapped[list[AnalysisJob]] = relationship(
-        back_populates="snapshot", cascade="all, delete-orphan"
+        back_populates="snapshot",
+        cascade="all, delete-orphan",
+        foreign_keys="AnalysisJob.snapshot_id",
     )
     files: Mapped[list[FileRecord]] = relationship(
         back_populates="snapshot", cascade="all, delete-orphan"
@@ -111,6 +125,19 @@ class AnalysisJob(Base):
     snapshot_id: Mapped[str] = mapped_column(
         ForeignKey("repository_snapshots.id", ondelete="CASCADE"), index=True
     )
+    requested_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    organization_id: Mapped[str | None] = mapped_column(
+        ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    base_snapshot_id: Mapped[str | None] = mapped_column(
+        ForeignKey("repository_snapshots.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    reuse_metrics: Mapped[dict] = mapped_column(
+        JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
+    cost_reservation_id: Mapped[str | None] = mapped_column(String(48), nullable=True, index=True)
     stage: Mapped[str] = mapped_column(String(32), default="pending")
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
     progress_current: Mapped[int] = mapped_column(Integer, default=0)
@@ -122,7 +149,9 @@ class AnalysisJob(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    snapshot: Mapped[RepositorySnapshot] = relationship(back_populates="jobs")
+    snapshot: Mapped[RepositorySnapshot] = relationship(
+        back_populates="jobs", foreign_keys=[snapshot_id]
+    )
 
 
 class FileRecord(Base):
@@ -214,15 +243,16 @@ class NavigationArtifact(Base):
         ),
     )
 
-    id: Mapped[str] = mapped_column(
-        String(48), primary_key=True, default=lambda: new_id("navart")
-    )
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("navart"))
     snapshot_id: Mapped[str] = mapped_column(
         ForeignKey("repository_snapshots.id", ondelete="CASCADE"), index=True
     )
     artifact_type: Mapped[str] = mapped_column(String(60), index=True)
     artifact_key: Mapped[str] = mapped_column(String(500))
     artifact_version: Mapped[str] = mapped_column(String(60), index=True)
+    dependency_fingerprint: Mapped[str | None] = mapped_column(
+        String(80), nullable=True, index=True
+    )
     status: Mapped[str] = mapped_column(String(32), default="ready", index=True)
     payload_json: Mapped[dict] = mapped_column(
         JSONB, default=dict, server_default=text("'{}'::jsonb")
@@ -241,9 +271,7 @@ class NavigationArtifact(Base):
         DateTime(timezone=True), default=utc_now, onupdate=utc_now
     )
 
-    snapshot: Mapped[RepositorySnapshot] = relationship(
-        back_populates="navigation_artifacts"
-    )
+    snapshot: Mapped[RepositorySnapshot] = relationship(back_populates="navigation_artifacts")
 
 
 class CodeChunk(Base):
@@ -396,6 +424,12 @@ class LearnerProfile(Base):
     __tablename__ = "learner_profiles"
 
     id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("learn"))
+    user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    organization_id: Mapped[str | None] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     anonymous_key: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     goal: Mapped[str] = mapped_column(String(60), default="understand_whole_project")
     preferred_explanation: Mapped[list[str]] = mapped_column(
@@ -867,6 +901,12 @@ class ChatSession(Base):
     __tablename__ = "chat_sessions"
 
     id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("ses"))
+    user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    organization_id: Mapped[str | None] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     snapshot_id: Mapped[str] = mapped_column(
         ForeignKey("repository_snapshots.id", ondelete="CASCADE"), index=True
     )
@@ -931,6 +971,13 @@ class DeepTask(Base):
     )
 
     id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("dtask"))
+    user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    organization_id: Mapped[str | None] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    cost_reservation_id: Mapped[str | None] = mapped_column(String(48), nullable=True, index=True)
     learning_session_id: Mapped[str | None] = mapped_column(
         ForeignKey("learning_sessions.id", ondelete="SET NULL"), nullable=True, index=True
     )
@@ -982,6 +1029,11 @@ class RetrievalRun(Base):
     index_version: Mapped[str] = mapped_column(String(60))
     latency_ms: Mapped[int] = mapped_column(Integer, default=0)
     token_usage: Mapped[dict] = mapped_column(JSONB, default=dict)
+    cache_source_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("retrieval_runs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    cache_status: Mapped[str] = mapped_column(String(32), default="miss", index=True)
+    cache_similarity: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
@@ -1004,3 +1056,467 @@ class RetrievalCandidate(Base):
     rrf_score: Mapped[float] = mapped_column(Float, default=0.0)
     rerank_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     selected: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True, index=True)
+    display_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class Organization(Base):
+    __tablename__ = "organizations"
+    __table_args__ = (Index("uq_organization_slug", "slug", unique=True),)
+
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("org"))
+    name: Mapped[str] = mapped_column(String(200))
+    slug: Mapped[str] = mapped_column(String(220))
+    kind: Mapped[str] = mapped_column(String(32), default="personal", index=True)
+    owner_user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), index=True
+    )
+    status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class OrganizationMembership(Base):
+    __tablename__ = "organization_memberships"
+    __table_args__ = (
+        Index("uq_membership_organization_user", "organization_id", "user_id", unique=True),
+    )
+
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("mem"))
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    role: Mapped[str] = mapped_column(String(32), default="member", index=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class OrganizationRepository(Base):
+    __tablename__ = "organization_repositories"
+    __table_args__ = (
+        Index("uq_organization_repository", "organization_id", "repository_id", unique=True),
+    )
+
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("orgrepo"))
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    repository_id: Mapped[str] = mapped_column(
+        ForeignKey("repositories.id", ondelete="CASCADE"), index=True
+    )
+    added_by: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    visibility: Mapped[str] = mapped_column(String(32), default="organization")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class UserPreference(Base):
+    __tablename__ = "user_preferences"
+
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    preferences_json: Mapped[dict] = mapped_column(
+        JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class SourceBlob(Base):
+    __tablename__ = "source_blobs"
+
+    content_hash: Mapped[str] = mapped_column(String(80), primary_key=True)
+    content: Mapped[str] = mapped_column(Text)
+    byte_size: Mapped[int] = mapped_column(BigInteger)
+    line_count: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class FileParseArtifact(Base):
+    __tablename__ = "file_parse_artifacts"
+    __table_args__ = (
+        Index(
+            "uq_parse_artifact_identity",
+            "content_hash",
+            "language",
+            "parser_version",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("parse"))
+    content_hash: Mapped[str] = mapped_column(
+        ForeignKey("source_blobs.content_hash", ondelete="CASCADE"), index=True
+    )
+    language: Mapped[str] = mapped_column(String(40))
+    parser_version: Mapped[str] = mapped_column(String(80))
+    payload_json: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class ChunkTemplate(Base):
+    __tablename__ = "chunk_templates"
+    __table_args__ = (
+        Index("uq_chunk_template_identity", "content_hash", "chunker_fingerprint", unique=True),
+    )
+
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("ctpl"))
+    content_hash: Mapped[str] = mapped_column(
+        ForeignKey("source_blobs.content_hash", ondelete="CASCADE"), index=True
+    )
+    chunker_fingerprint: Mapped[str] = mapped_column(String(80), index=True)
+    payload_json: Mapped[list[dict]] = mapped_column(JSONB, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class EmbeddingCache(Base):
+    __tablename__ = "embedding_cache"
+    __table_args__ = (
+        Index(
+            "uq_embedding_cache_identity",
+            "provider",
+            "model",
+            "dimensions",
+            "prompt_version",
+            "text_hash",
+            unique=True,
+        ),
+        Index(
+            "ix_embedding_cache_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("emb"))
+    provider: Mapped[str] = mapped_column(String(40))
+    model: Mapped[str] = mapped_column(String(120))
+    dimensions: Mapped[int] = mapped_column(Integer)
+    prompt_version: Mapped[str] = mapped_column(String(80))
+    text_hash: Mapped[str] = mapped_column(String(80), index=True)
+    embedding: Mapped[list[float]] = mapped_column(Vector(768))
+    token_usage: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class SnapshotManifest(Base):
+    __tablename__ = "snapshot_manifests"
+    __table_args__ = (Index("uq_snapshot_manifest_path", "snapshot_id", "path", unique=True),)
+
+    id: Mapped[str] = mapped_column(
+        String(48), primary_key=True, default=lambda: new_id("manifest")
+    )
+    snapshot_id: Mapped[str] = mapped_column(
+        ForeignKey("repository_snapshots.id", ondelete="CASCADE"), index=True
+    )
+    path: Mapped[str] = mapped_column(String(1000))
+    content_hash: Mapped[str] = mapped_column(String(80), index=True)
+    language: Mapped[str] = mapped_column(String(40))
+    byte_size: Mapped[int] = mapped_column(BigInteger)
+
+
+class SnapshotFileLineage(Base):
+    __tablename__ = "snapshot_file_lineage"
+    __table_args__ = (Index("uq_snapshot_lineage_path", "snapshot_id", "path", unique=True),)
+
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("lineage"))
+    snapshot_id: Mapped[str] = mapped_column(
+        ForeignKey("repository_snapshots.id", ondelete="CASCADE"), index=True
+    )
+    file_id: Mapped[str] = mapped_column(ForeignKey("files.id", ondelete="CASCADE"), index=True)
+    base_file_id: Mapped[str | None] = mapped_column(
+        ForeignKey("files.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    path: Mapped[str] = mapped_column(String(1000))
+    previous_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    change_kind: Mapped[str] = mapped_column(String(32), index=True)
+    reused_parse: Mapped[bool] = mapped_column(Boolean, default=False)
+    reused_chunks: Mapped[bool] = mapped_column(Boolean, default=False)
+    reused_embeddings: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class SemanticCacheEntry(Base):
+    __tablename__ = "semantic_cache_entries"
+    __table_args__ = (
+        Index(
+            "uq_semantic_cache_exact_scope",
+            "cache_kind",
+            "scope",
+            "scope_id",
+            "exact_key",
+            unique=True,
+        ),
+        Index(
+            "ix_semantic_cache_scope_snapshot_intent",
+            "scope",
+            "scope_id",
+            "snapshot_id",
+            "intent",
+            "created_at",
+        ),
+        Index(
+            "ix_semantic_cache_embedding_hnsw",
+            "query_embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"query_embedding": "vector_cosine_ops"},
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("cache"))
+    cache_kind: Mapped[str] = mapped_column(String(24), index=True)
+    scope: Mapped[str] = mapped_column(String(24), index=True)
+    scope_id: Mapped[str] = mapped_column(String(128), default="public", index=True)
+    snapshot_id: Mapped[str] = mapped_column(
+        ForeignKey("repository_snapshots.id", ondelete="CASCADE"), index=True
+    )
+    compatible_evidence_fingerprint: Mapped[str] = mapped_column(String(80), index=True)
+    exact_key: Mapped[str] = mapped_column(String(80), index=True)
+    normalized_query: Mapped[str] = mapped_column(Text)
+    query_embedding: Mapped[list[float] | None] = mapped_column(Vector(768), nullable=True)
+    intent: Mapped[str] = mapped_column(String(40), index=True)
+    context_fingerprint: Mapped[str] = mapped_column(String(80), index=True)
+    payload_json: Mapped[dict] = mapped_column(JSONB, default=dict)
+    evidence_manifest: Mapped[list[dict]] = mapped_column(JSONB, default=list)
+    model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    prompt_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    index_version: Mapped[str] = mapped_column(String(80))
+    source_run_id: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    source_message_id: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    hit_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_hit_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    invalidated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    quality_status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class Plan(Base):
+    __tablename__ = "plans"
+
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("plan"))
+    code: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(160))
+    monthly_allowance_micro_usd: Mapped[int] = mapped_column(BigInteger, default=0)
+    policy_json: Mapped[dict] = mapped_column(JSONB, default=dict)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class OrganizationSubscription(Base):
+    __tablename__ = "organization_subscriptions"
+
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), primary_key=True
+    )
+    plan_id: Mapped[str] = mapped_column(ForeignKey("plans.id", ondelete="RESTRICT"), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    current_period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    current_period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class QuotaPeriod(Base):
+    __tablename__ = "quota_periods"
+    __table_args__ = (Index("uq_quota_org_period", "organization_id", "period_start", unique=True),)
+
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("quota"))
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    allowance_micro_usd: Mapped[int] = mapped_column(BigInteger, default=0)
+    reserved_micro_usd: Mapped[int] = mapped_column(BigInteger, default=0)
+    consumed_micro_usd: Mapped[int] = mapped_column(BigInteger, default=0)
+    bonus_consumed_micro_usd: Mapped[int] = mapped_column(BigInteger, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class FeatureLimit(Base):
+    __tablename__ = "feature_limits"
+    __table_args__ = (Index("uq_feature_limit_plan_feature", "plan_id", "feature", unique=True),)
+
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("flimit"))
+    plan_id: Mapped[str] = mapped_column(ForeignKey("plans.id", ondelete="CASCADE"), index=True)
+    feature: Mapped[str] = mapped_column(String(80), index=True)
+    request_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    token_limit: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    duration_limit_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    concurrent_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_input_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class BonusCreditGrant(Base):
+    __tablename__ = "bonus_credit_grants"
+
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("bonus"))
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    amount_micro_usd: Mapped[int] = mapped_column(BigInteger)
+    remaining_micro_usd: Mapped[int] = mapped_column(BigInteger)
+    reason: Mapped[str] = mapped_column(Text)
+    reference: Mapped[str] = mapped_column(String(240))
+    granted_by_user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), index=True
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class UsageReservation(Base):
+    __tablename__ = "usage_reservations"
+    __table_args__ = (
+        Index(
+            "uq_usage_reservation_idempotency", "organization_id", "idempotency_key", unique=True
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("reserve"))
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    quota_period_id: Mapped[str] = mapped_column(
+        ForeignKey("quota_periods.id", ondelete="CASCADE"), index=True
+    )
+    feature: Mapped[str] = mapped_column(String(80), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(240))
+    estimated_cost_micro_usd: Mapped[int] = mapped_column(BigInteger)
+    settled_cost_micro_usd: Mapped[int] = mapped_column(BigInteger, default=0)
+    status: Mapped[str] = mapped_column(String(40), default="reserved", index=True)
+    provider_request_id: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class UsageEvent(Base):
+    __tablename__ = "usage_events"
+    __table_args__ = (
+        Index("uq_usage_event_idempotency", "organization_id", "idempotency_key", unique=True),
+    )
+
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("usage"))
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    reservation_id: Mapped[str | None] = mapped_column(
+        ForeignKey("usage_reservations.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    feature: Mapped[str] = mapped_column(String(80), index=True)
+    event_type: Mapped[str] = mapped_column(String(40), default="settlement", index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(240))
+    provider: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    price_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    usage_json: Mapped[dict] = mapped_column(JSONB, default=dict)
+    estimated_cost_micro_usd: Mapped[int] = mapped_column(BigInteger, default=0)
+    settled_cost_micro_usd: Mapped[int] = mapped_column(BigInteger, default=0)
+    cache_status: Mapped[str] = mapped_column(String(32), default="miss")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, index=True
+    )
+
+
+class ModelPrice(Base):
+    __tablename__ = "model_prices"
+    __table_args__ = (
+        Index(
+            "uq_model_price_version", "provider", "model", "usage_type", "effective_at", unique=True
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("price"))
+    provider: Mapped[str] = mapped_column(String(40))
+    model: Mapped[str] = mapped_column(String(120))
+    usage_type: Mapped[str] = mapped_column(String(60))
+    unit: Mapped[str] = mapped_column(String(40))
+    micro_usd_per_unit: Mapped[int] = mapped_column(BigInteger)
+    version: Mapped[str] = mapped_column(String(80))
+    effective_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class UsageDailyRollup(Base):
+    __tablename__ = "usage_daily_rollups"
+    __table_args__ = (
+        Index(
+            "uq_usage_rollup_key",
+            "organization_id",
+            "day",
+            "feature",
+            "provider",
+            "model",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("rollup"))
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    day: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    feature: Mapped[str] = mapped_column(String(80))
+    provider: Mapped[str] = mapped_column(String(40), default="internal")
+    model: Mapped[str] = mapped_column(String(120), default="none")
+    request_count: Mapped[int] = mapped_column(Integer, default=0)
+    cache_hit_count: Mapped[int] = mapped_column(Integer, default=0)
+    usage_json: Mapped[dict] = mapped_column(JSONB, default=dict)
+    settled_cost_micro_usd: Mapped[int] = mapped_column(BigInteger, default=0)
+
+
+class AuditEvent(Base):
+    __tablename__ = "audit_events"
+
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("audit"))
+    organization_id: Mapped[str | None] = mapped_column(
+        ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    actor_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    action: Mapped[str] = mapped_column(String(120), index=True)
+    target_type: Mapped[str] = mapped_column(String(80))
+    target_id: Mapped[str] = mapped_column(String(128))
+    metadata_json: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, index=True
+    )

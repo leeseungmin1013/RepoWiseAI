@@ -49,6 +49,7 @@ class RetrievalResult:
     run: RetrievalRun
     analysis: QueryAnalysis
     hits: list[FusedHit]
+    query_embedding: list[float] | None = None
 
 
 def evidence_id_for_chunk(chunk_id: str) -> str:
@@ -68,21 +69,25 @@ class HybridRetriever:
         message_id: str,
         query: str,
         selection: dict | None = None,
+        query_embedding: list[float] | None = None,
     ) -> RetrievalResult:
         started = perf_counter()
         analysis = analyze_query(query)
         candidate_limit = self.settings.retrieval_candidate_k
         ranked: dict[str, list[RankedChunk]] = {
             "exact": self._exact(db, snapshot.id, analysis.exact_terms, candidate_limit),
-            "lexical": self._lexical(
-                db, snapshot.id, analysis.lexical_query, candidate_limit
-            ),
+            "lexical": self._lexical(db, snapshot.id, analysis.lexical_query, candidate_limit),
             "selection": self._selection(db, snapshot.id, selection, candidate_limit),
         }
         vector_status = "ready"
+        resolved_query_embedding = query_embedding
         try:
-            ranked["vector"] = self._vector(
-                db, snapshot, f"{query}\n{analysis.lexical_query}", candidate_limit
+            ranked["vector"], resolved_query_embedding = self._vector(
+                db,
+                snapshot,
+                f"{query}\n{analysis.lexical_query}",
+                candidate_limit,
+                query_vector=query_embedding,
             )
         except EmbeddingUnavailable as exc:
             ranked["vector"] = []
@@ -165,12 +170,15 @@ class HybridRetriever:
                     )
                 )
         run.latency_ms = round((perf_counter() - started) * 1_000)
-        return RetrievalResult(run=run, analysis=analysis, hits=hits)
+        return RetrievalResult(
+            run=run,
+            analysis=analysis,
+            hits=hits,
+            query_embedding=resolved_query_embedding,
+        )
 
     @staticmethod
-    def _exact(
-        db: Session, snapshot_id: str, terms: list[str], limit: int
-    ) -> list[RankedChunk]:
+    def _exact(db: Session, snapshot_id: str, terms: list[str], limit: int) -> list[RankedChunk]:
         if not terms:
             return []
         conditions = []
@@ -240,10 +248,17 @@ class HybridRetriever:
         ]
 
     def _vector(
-        self, db: Session, snapshot: RepositorySnapshot, query: str, limit: int
-    ) -> list[RankedChunk]:
-        embedder = build_embedder(self.settings, snapshot.embedding_model)
-        query_vector = embedder.embed_query(query)
+        self,
+        db: Session,
+        snapshot: RepositorySnapshot,
+        query: str,
+        limit: int,
+        *,
+        query_vector: list[float] | None = None,
+    ) -> tuple[list[RankedChunk], list[float]]:
+        if query_vector is None:
+            embedder = build_embedder(self.settings, snapshot.embedding_model)
+            query_vector = embedder.embed_query(query)
         distance = CodeChunk.embedding.cosine_distance(query_vector)
         rows = db.execute(
             select(CodeChunk, distance.label("distance"))
@@ -255,15 +270,18 @@ class HybridRetriever:
             .order_by(distance)
             .limit(limit)
         ).all()
-        return [
-            RankedChunk(
-                chunk=chunk,
-                retriever="vector",
-                rank=rank,
-                raw_score=max(-1.0, 1.0 - float(vector_distance)),
-            )
-            for rank, (chunk, vector_distance) in enumerate(rows, start=1)
-        ]
+        return (
+            [
+                RankedChunk(
+                    chunk=chunk,
+                    retriever="vector",
+                    rank=rank,
+                    raw_score=max(-1.0, 1.0 - float(vector_distance)),
+                )
+                for rank, (chunk, vector_distance) in enumerate(rows, start=1)
+            ],
+            query_vector,
+        )
 
     @staticmethod
     def _selection(

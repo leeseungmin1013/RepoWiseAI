@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -98,6 +99,7 @@ def write_navigation_artifacts(
                 "artifact_key": artifact.artifact_key,
                 "artifact_version": artifact.artifact_version,
                 "status": "ready",
+                "dependency_fingerprint": _dependency_fingerprint(db, payload),
                 "payload_json": payload,
                 "evidence_ids": _evidence_ids(payload),
                 "confidence_summary": _confidence_summary(payload),
@@ -122,6 +124,7 @@ def write_navigation_artifacts(
         ],
         set_={
             "status": excluded.status,
+            "dependency_fingerprint": excluded.dependency_fingerprint,
             "payload_json": excluded.payload_json,
             "evidence_ids": excluded.evidence_ids,
             "confidence_summary": excluded.confidence_summary,
@@ -138,12 +141,36 @@ def write_navigation_artifacts(
     return True
 
 
+def _dependency_fingerprint(_db: Session, payload: object) -> str:
+    dependencies: list[tuple[str, str, int, int]] = []
+    stack = [payload]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, dict):
+            if (
+                isinstance(current.get("file_id"), str)
+                and isinstance(current.get("path"), str)
+                and isinstance(current.get("start_line"), int)
+            ):
+                dependencies.append(
+                    (
+                        current["file_id"],
+                        current["path"],
+                        current["start_line"],
+                        int(current.get("end_line", current["start_line"])),
+                    )
+                )
+            stack.extend(current.values())
+        elif isinstance(current, list):
+            stack.extend(current)
+    encoded = json.dumps(sorted(set(dependencies)), ensure_ascii=False, separators=(",", ":"))
+    return f"sha256:{hashlib.sha256(encoded.encode('utf-8')).hexdigest()}"
+
+
 def _artifact_id(
     snapshot_id: str, artifact_type: str, artifact_key: str, artifact_version: str
 ) -> str:
-    semantic_key = "|".join(
-        (snapshot_id, artifact_type, artifact_key, artifact_version)
-    )
+    semantic_key = "|".join((snapshot_id, artifact_type, artifact_key, artifact_version))
     digest = hashlib.sha256(semantic_key.encode("utf-8")).hexdigest()[:32]
     return f"navart_{digest}"
 
@@ -179,6 +206,4 @@ def _confidence_summary(payload: object) -> dict[str, int]:
             stack.extend(current.values())
         elif isinstance(current, list):
             stack.extend(current)
-    return {
-        key: counts.get(key, 0) for key in ("verified", "inferred", "unknown")
-    }
+    return {key: counts.get(key, 0) for key in ("verified", "inferred", "unknown")}

@@ -4,9 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.auth import AdminDep
+from app.core.authorization import ensure_chat_access
 from app.core.config import get_settings
 from app.core.db import get_db
-from app.models import CodeChunk, FileRecord, RetrievalCandidate, RetrievalRun
+from app.models import ChatSession, CodeChunk, FileRecord, RetrievalCandidate, RetrievalRun
 from app.schemas import RetrievalCandidateDebug, RetrievalRunDebug
 
 router = APIRouter(prefix="/debug", tags=["debug"])
@@ -14,12 +16,16 @@ SessionDep = Annotated[Session, Depends(get_db)]
 
 
 @router.get("/retrieval-runs/{run_id}", response_model=RetrievalRunDebug)
-def get_retrieval_run(run_id: str, db: SessionDep):
+def get_retrieval_run(run_id: str, db: SessionDep, admin: AdminDep):
     if get_settings().app_env == "production":
         raise HTTPException(status_code=404, detail="Not found")
     run = db.get(RetrievalRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Retrieval run not found")
+    session = db.get(ChatSession, run.session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Retrieval run not found")
+    ensure_chat_access(db, admin, session)
     rows = db.execute(
         select(RetrievalCandidate, CodeChunk, FileRecord)
         .join(CodeChunk, CodeChunk.id == RetrievalCandidate.source_id)

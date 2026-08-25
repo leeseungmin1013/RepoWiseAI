@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   api,
+  authenticatedFetch,
   type DeepTask,
   type DeepTaskRequest,
   type DeepTaskResult,
@@ -76,11 +77,82 @@ function createIdempotencyKey() {
   return `deep-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function defaultEventSource(url: string): DeepTaskEventSource {
-  if (typeof EventSource === "undefined") {
-    throw new Error("EventSource is unavailable");
+
+class AuthenticatedEventSource implements DeepTaskEventSource {
+  onmessage: ((event: MessageEvent<string>) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+  private readonly controller = new AbortController();
+  private readonly listeners = new Map<string, Set<EventListener>>();
+  private closed = false;
+
+  constructor(private readonly url: string) {
+    queueMicrotask(() => void this.read());
   }
-  return new EventSource(url);
+
+  addEventListener(type: string, listener: EventListener) {
+    const listeners = this.listeners.get(type) ?? new Set<EventListener>();
+    listeners.add(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  removeEventListener(type: string, listener: EventListener) {
+    this.listeners.get(type)?.delete(listener);
+  }
+
+  close() {
+    this.closed = true;
+    this.controller.abort();
+    this.listeners.clear();
+  }
+
+  private dispatch(type: string, data: string) {
+    const event = new MessageEvent(type, { data });
+    this.listeners.get(type)?.forEach((listener) => listener(event));
+    if (type === "message") this.onmessage?.(event);
+  }
+
+  private parseFrame(frame: string) {
+    let eventType = "message";
+    const data: string[] = [];
+    for (const line of frame.split(/\r?\n/)) {
+      if (line.startsWith("event:")) eventType = line.slice(6).trim();
+      if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
+    }
+    if (data.length) this.dispatch(eventType, data.join("\n"));
+  }
+
+  private async read() {
+    try {
+      const response = await authenticatedFetch(this.url, {
+        headers: { Accept: "text/event-stream" },
+        signal: this.controller.signal,
+      });
+      if (!response.ok || !response.body) throw new Error(`SSE HTTP ${response.status}`);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (!this.closed) {
+        const { done, value } = await reader.read();
+        buffer += decoder.decode(value, { stream: !done });
+        const frames = buffer.split(/\r?\n\r?\n/);
+        buffer = frames.pop() ?? "";
+        frames.forEach((frame) => this.parseFrame(frame));
+        if (done) break;
+      }
+      if (!this.closed) this.onerror?.(new Event("error"));
+    } catch (reason) {
+      if (
+        !this.closed &&
+        !(reason instanceof DOMException && reason.name === "AbortError")
+      ) {
+        this.onerror?.(new Event("error"));
+      }
+    }
+  }
+}
+
+function defaultEventSource(url: string): DeepTaskEventSource {
+  return new AuthenticatedEventSource(url);
 }
 
 export function useDeepLearningTask({

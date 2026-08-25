@@ -71,6 +71,22 @@ output/   프로젝트 기획서 PDF
 
 `OPENAI_API_KEY`가 없으면 deterministic local hash vector로 검색·citation 흐름을 실행합니다. 키를 설정하면 `text-embedding-3-small`의 768차원 embedding과 `gpt-5.4-mini` Structured Outputs가 semantic retrieval과 근거 기반 설명을 담당합니다. 모델명과 provider는 `.env`에서 교체할 수 있습니다.
 
+## 인증, 분석 재사용, 사용량 설정
+
+보호 API는 Supabase access token을 FastAPI에서 JWKS로 검증하고, 모든 자원을 application organization에 연결합니다. 브라우저에는 `NEXT_PUBLIC_SUPABASE_URL`과 publishable key만 설정하며 service-role key는 절대 전달하지 않습니다.
+
+운영 전환 순서는 다음과 같습니다.
+
+1. Supabase redirect URL에 `/auth/callback`을 등록하고 asymmetric signing key를 사용합니다.
+2. `.env`에 `SUPABASE_URL`을 설정하고 웹 환경에 publishable key를 설정합니다.
+3. migration `0010`부터 `0016`까지 적용합니다.
+4. cache는 write/shadow 관측 후 read를 켭니다.
+5. quota는 `off`, `shadow`, `enforce` 순서로 올립니다.
+6. 보호 전환 시 `AUTH_REQUIRED=true`로 설정합니다.
+
+동일 commit과 analysis fingerprint는 기존 snapshot/job을 재사용합니다. 작은 변경은 manifest diff, dependency closure, content-addressed parse/chunk/embedding cache를 사용하며 영향 범위가 30%를 넘으면 full 분석으로 전환합니다. 계정 화면 `/account`에서 월간 allowance, bonus, 예약, 잔여량, 기능별 hard limit, cache hit 원장을 확인할 수 있습니다.
+
+운영 rollback은 각 feature flag를 끄는 방식으로 수행합니다. incremental 실패 시 full 경로가 유지되고, semantic cache read를 꺼도 write/기존 원장은 보존됩니다. stale reservation과 만료 cache 정리는 maintenance worker 함수로 수행합니다.
 ## OpenAI 설정
 
 `.env`의 `OPENAI_API_KEY`에 프로젝트용 API 키를 설정하고 `EMBEDDING_PROVIDER=auto`, `GENERATION_PROVIDER=auto`를 유지하면 OpenAI provider가 자동으로 활성화됩니다.
@@ -289,4 +305,5 @@ pnpm eval:story
 - [전체 프로젝트 기획서](docs/plans/01_2026-07-06_PROJECT_PLAN.md)
 - [구현 계획서](docs/plans/02_2026-07-06_IMPLEMENTATION_PLAN.md)
 - [Repository Structure First UI 개편 계획과 구현 결과](docs/plans/07_2026-07-30_REPOSITORY_STRUCTURE_FIRST_UI_REDESIGN_PLAN.md)
+- [Production packaging 실행·환경변수·rollback 계약](docs/operations/production-packaging.md)
 - [프로젝트 기획서 PDF](output/pdf/RepoWiseAI_Project_Plan.pdf)

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.ai.gateway import MeteredOpenAIClient
 from app.core.config import Settings
 from app.schemas import ArchitectureGraphResponse
 
@@ -59,14 +61,13 @@ def apply_architecture_label_suggestions(
 def enhance_architecture_graph_labels(
     graph: ArchitectureGraphResponse,
     settings: Settings,
+    recorder: Callable[..., None] | None = None,
 ) -> ArchitectureGraphResponse:
     if not settings.openai_api_key or settings.generation_provider not in {
         "auto",
         "openai",
     }:
         raise RuntimeError("OpenAI generation is unavailable")
-
-    from openai import OpenAI
 
     candidates = [
         {
@@ -80,8 +81,8 @@ def enhance_architecture_graph_labels(
         }
         for node in graph.nodes
     ]
-    client = OpenAI(api_key=settings.openai_api_key)
-    response = client.responses.parse(
+    client = MeteredOpenAIClient(settings.openai_api_key, recorder=recorder)
+    response = client.responses_parse(
         model=settings.generation_model,
         input=[
             {

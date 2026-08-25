@@ -12,6 +12,7 @@ dependencies = [
     "pgvector>=0.4.2",
     "psycopg[binary]>=3.3.4",
     "pydantic-settings>=2.14.2",
+    "pyjwt[crypto]>=2.10.1",
     "python-multipart>=0.0.32",
     "redis>=8.0.1",
     "rq>=2.10.0",

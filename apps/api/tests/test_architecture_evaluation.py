@@ -50,3 +50,23 @@ def test_architecture_evaluator_scores_required_nodes_edges_and_flow_mapping() -
     assert report["evidence_validity"] == 1.0
     assert report["graph_size_compliance"] == 1.0
     assert report["passed"] is True
+
+
+def test_architecture_evaluator_matches_snapshot_scoped_flow_by_evidence() -> None:
+    snapshot, files, symbols, edges, project_map, flows = graph_inputs()
+    graph = build_architecture_graph(snapshot, files, symbols, edges, project_map, flows)
+    fixture = ArchitectureGoldFixture(
+        name="architecture-demo",
+        repository="example/architecture-demo",
+        nodes=[GoldArchitectureNode(id="client", evidence_paths=[files[0].path])],
+        flows=[
+            GoldArchitectureFlow(
+                flow_id="flow-from-an-older-snapshot",
+                evidence_paths=[file.path for file in files],
+            )
+        ],
+    )
+
+    report = evaluate_architecture_output(graph, fixture)
+
+    assert report["feature_mapping_coverage"] == 1.0

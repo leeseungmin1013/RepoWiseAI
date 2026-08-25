@@ -7,6 +7,7 @@ from collections import Counter
 from collections.abc import Sequence
 from typing import Protocol
 
+from app.ai.gateway import MeteredOpenAIClient, extract_usage
 from app.core.config import Settings
 
 EMBEDDING_DIMENSIONS = 768
@@ -72,10 +73,14 @@ class OpenAIEmbedder:
     dimensions = EMBEDDING_DIMENSIONS
 
     def __init__(self, api_key: str, model_name: str) -> None:
-        from openai import OpenAI
-
         self.model_name = model_name
-        self._client = OpenAI(api_key=api_key)
+        self.usage: dict[str, int] = {}
+        self._client = MeteredOpenAIClient(api_key, recorder=self._record_usage)
+
+    def _record_usage(self, response: object, **_: object) -> None:
+        current = extract_usage(response, embedding=True).as_dict()
+        for key, value in current.items():
+            self.usage[key] = self.usage.get(key, 0) + value
 
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
         return self._embed_many(
@@ -94,7 +99,7 @@ class OpenAIEmbedder:
         batch_size = 128
         for start in range(0, len(texts), batch_size):
             inputs = [text[:24_000] or " " for text in texts[start : start + batch_size]]
-            response = self._client.embeddings.create(
+            response = self._client.embeddings_create(
                 model=self.model_name,
                 input=inputs,
                 dimensions=self.dimensions,

@@ -48,7 +48,11 @@ class NavigationGoldFixture(BaseModel):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate navigation feature flows")
-    parser.add_argument("--fixture", required=True, type=Path)
+    parser.add_argument(
+        "--fixture",
+        type=Path,
+        default=Path("apps/api/evaluation/fixtures/navigation_repowise_gold_v1.json"),
+    )
     parser.add_argument("--snapshot-id")
     parser.add_argument("--fail-feature-recall", type=float)
     parser.add_argument("--fail-verified-precision", type=float)

@@ -64,3 +64,22 @@ def test_repository_story_evaluator_scores_roles_narrative_and_evidence() -> Non
     assert report["narrative_field_coverage"] == 1.0
     assert report["generic_responsibility_ratio"] == 0.0
     assert report["passed"] is True
+
+
+def test_repository_story_evaluator_counts_snapshot_scoped_feature_mappings() -> None:
+    snapshot, files, symbols, edges, project_map, flows = graph_inputs()
+    graph = build_architecture_graph(snapshot, files, symbols, edges, project_map, flows)
+    story = build_repository_story(snapshot, project_map, graph, [])
+    fixture = RepositoryStoryGoldFixture(
+        name="story-demo",
+        repository="example/architecture-demo",
+        roles=[
+            GoldRepositoryRole(id=role.id, evidence_paths=[role.evidence[0].path])
+            for role in story.roles
+        ],
+        expected_feature_ids=["flow-from-an-older-snapshot"],
+    )
+
+    assert (
+        evaluate_repository_story_output(story, fixture)["feature_to_role_mapping_coverage"] == 1.0
+    )

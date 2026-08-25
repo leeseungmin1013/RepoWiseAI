@@ -93,8 +93,7 @@ def evaluate_architecture_output(
         for node in graph.nodes
     )
     file_ranges = {
-        _normalize(path): line_count
-        for path, line_count in _evidence_file_ranges(graph).items()
+        _normalize(path): line_count for path, line_count in _evidence_file_ranges(graph).items()
     }
     all_evidence = [
         evidence
@@ -103,27 +102,28 @@ def evaluate_architecture_output(
     ]
     valid_evidence = sum(
         _normalize(evidence.path) in file_ranges
-        and 1
-        <= evidence.start_line
-        <= evidence.end_line
-        <= file_ranges[_normalize(evidence.path)]
+        and 1 <= evidence.start_line <= evidence.end_line <= file_ranges[_normalize(evidence.path)]
         for evidence in all_evidence
     )
 
-    expected_flow_paths = {
-        item.flow_id: {_normalize(path) for path in item.evidence_paths} for item in fixture.flows
-    }
+    actual_flow_paths: dict[str, set[str]] = {}
+    for node in graph.nodes:
+        node_paths = {_normalize(evidence.path) for evidence in node.evidence}
+        for flow_id in node.feature_flow_ids:
+            actual_flow_paths.setdefault(flow_id, set()).update(node_paths)
+
     mapped = 0
     total = 0
-    for flow_id, paths in expected_flow_paths.items():
+    for item in fixture.flows:
+        paths = {_normalize(path) for path in item.evidence_paths}
         total += len(paths)
-        actual_paths = {
-            _normalize(evidence.path)
-            for node in graph.nodes
-            if flow_id in node.feature_flow_ids
-            for evidence in node.evidence
-        }
-        mapped += len(paths & actual_paths)
+        # Flow IDs include the snapshot commit and intentionally change between
+        # analyses. Match a gold flow to the generated flow with the strongest
+        # evidence overlap so a fixture remains valid across repository commits.
+        mapped += max(
+            (len(paths & actual_paths) for actual_paths in actual_flow_paths.values()),
+            default=0,
+        )
 
     report: dict[str, float | int | str | bool] = {
         "fixture": fixture.name,
@@ -182,12 +182,8 @@ def evaluate_fixture(
 ) -> dict[str, float | int | str | bool]:
     with SessionLocal() as db:
         snapshot = _load_snapshot(db, fixture.repository, snapshot_id)
-        files = db.scalars(
-            select(FileRecord).where(FileRecord.snapshot_id == snapshot.id)
-        ).all()
-        symbols = db.scalars(
-            select(Symbol).where(Symbol.snapshot_id == snapshot.id)
-        ).all()
+        files = db.scalars(select(FileRecord).where(FileRecord.snapshot_id == snapshot.id)).all()
+        symbols = db.scalars(select(Symbol).where(Symbol.snapshot_id == snapshot.id)).all()
         edges = db.scalars(
             select(SymbolEdge).where(
                 SymbolEdge.snapshot_id == snapshot.id,
@@ -204,16 +200,10 @@ def evaluate_fixture(
         flows = [
             detail
             for summary in catalog.flows
-            if (
-                detail := build_feature_flow(
-                    snapshot, files, symbols, edges, summary.id
-                )
-            )
+            if (detail := build_feature_flow(snapshot, files, symbols, edges, summary.id))
             is not None
         ]
-        graph = build_architecture_graph(
-            snapshot, files, symbols, edges, project_map, flows
-        )
+        graph = build_architecture_graph(snapshot, files, symbols, edges, project_map, flows)
     report = evaluate_architecture_output(graph, fixture)
     evidence = [
         item
@@ -222,15 +212,10 @@ def evaluate_fixture(
     ]
     valid = sum(
         item.path in file_line_counts
-        and 1
-        <= item.start_line
-        <= item.end_line
-        <= file_line_counts[item.path]
+        and 1 <= item.start_line <= item.end_line <= file_line_counts[item.path]
         for item in evidence
     )
-    report["evidence_validity"] = round(
-        valid / len(evidence) if evidence else 1.0, 4
-    )
+    report["evidence_validity"] = round(valid / len(evidence) if evidence else 1.0, 4)
     report["snapshot_id"] = snapshot.id
     report["commit_sha"] = snapshot.commit_sha or ""
     report["passed"] = all(
@@ -263,9 +248,7 @@ def _load_snapshot(
     else:
         owner, name = repository_name.split("/", 1)
         statement = statement.where(Repository.owner == owner, Repository.name == name)
-    snapshot = db.scalar(
-        statement.order_by(RepositorySnapshot.created_at.desc()).limit(1)
-    )
+    snapshot = db.scalar(statement.order_by(RepositorySnapshot.created_at.desc()).limit(1))
     if snapshot is None:
         raise RuntimeError("No semantic-ts-v2 snapshot matched the architecture fixture")
     return snapshot
@@ -280,16 +263,11 @@ def main() -> None:
     )
     parser.add_argument("--snapshot-id")
     args = parser.parse_args()
-    fixture = ArchitectureGoldFixture.model_validate_json(
-        args.fixture.read_text(encoding="utf-8")
-    )
-    print(
-        json.dumps(
-            evaluate_fixture(fixture, snapshot_id=args.snapshot_id),
-            ensure_ascii=False,
-            indent=2,
-        )
-    )
+    fixture = ArchitectureGoldFixture.model_validate_json(args.fixture.read_text(encoding="utf-8"))
+    report = evaluate_fixture(fixture, snapshot_id=args.snapshot_id)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    if not report["passed"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

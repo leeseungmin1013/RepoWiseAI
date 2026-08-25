@@ -1,32 +1,68 @@
-from fastapi import APIRouter
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+from fastapi import APIRouter, Response, status
 from redis import Redis
 from sqlalchemy import text
 
-from app.core.config import get_settings
+from app.core.config import API_ROOT, get_settings
 from app.core.db import SessionLocal
 
 router = APIRouter(tags=["system"])
 
 
+def _identity() -> dict[str, str]:
+    settings = get_settings()
+    return {"version": "0.1.0", "release": settings.resolved_release_sha}
+
+
 @router.get("/health")
-def health() -> dict[str, object]:
+@router.get("/health/live")
+def liveness() -> dict[str, object]:
+    return {"status": "alive", **_identity()}
+
+
+def _expected_migration_head() -> str | None:
+    config = Config(str(API_ROOT / "alembic.ini"))
+    script = ScriptDirectory.from_config(config)
+    return script.get_current_head()
+
+
+@router.get("/health/ready")
+def readiness(response: Response) -> dict[str, object]:
+    settings = get_settings()
     checks: dict[str, str] = {}
 
     try:
         with SessionLocal() as session:
+            session.execute(
+                text("SELECT set_config('statement_timeout', :timeout_ms, true)"),
+                {"timeout_ms": str(max(1, int(settings.healthcheck_timeout_seconds * 1000)))},
+            )
             session.execute(text("SELECT 1"))
+            current_head = session.execute(text("SELECT version_num FROM alembic_version")).scalar()
+            if current_head != _expected_migration_head():
+                raise RuntimeError("database migration is not at application head")
         checks["database"] = "ready"
+        checks["migration"] = "ready"
     except Exception:
         checks["database"] = "unavailable"
+        checks["migration"] = "incompatible"
 
     try:
-        Redis.from_url(get_settings().redis_url).ping()
+        Redis.from_url(
+            settings.redis_url,
+            socket_connect_timeout=settings.healthcheck_timeout_seconds,
+            socket_timeout=settings.healthcheck_timeout_seconds,
+        ).ping()
         checks["queue"] = "ready"
     except Exception:
         checks["queue"] = "unavailable"
 
+    ready = all(value == "ready" for value in checks.values())
+    if not ready:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     return {
-        "status": "ready" if all(value == "ready" for value in checks.values()) else "degraded",
-        "version": "0.1.0",
+        "status": "ready" if ready else "unavailable",
+        **_identity(),
         "checks": checks,
     }

@@ -3,15 +3,22 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
+API_ROOT = Path(__file__).resolve().parents[2]
+REPOSITORY_ROOT = API_ROOT.parent.parent if API_ROOT.parent.name == "apps" else API_ROOT
 
 
 class Settings(BaseSettings):
     app_name: str = "RepoWise AI API"
     app_env: str = "development"
+    service_name: str = "repowise-api"
+    release_sha: str = "local"
+    render_git_commit: str | None = None
+    log_level: str = "INFO"
     api_prefix: str = "/api"
     database_url: str = "postgresql+psycopg://repowise:repowise@localhost:5432/repowise"
+    migration_database_url: str | None = None
     redis_url: str = "redis://localhost:6379/0"
+    healthcheck_timeout_seconds: float = 2.0
     queue_name: str = "repowise-analysis"
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
     analysis_workspace: Path = REPOSITORY_ROOT / ".data" / "repositories"
@@ -94,6 +101,10 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    @property
+    def resolved_release_sha(self) -> str:
+        return self.render_git_commit or self.release_sha
 
     @property
     def cors_origin_list(self) -> list[str]:

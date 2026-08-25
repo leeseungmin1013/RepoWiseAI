@@ -16,6 +16,8 @@
     "eval:navigation": "uv run --project apps/api python -m app.evaluation.navigation",
     "eval:architecture": "uv run --project apps/api python -m app.evaluation.architecture",
     "eval:story": "uv run --project apps/api python -m app.evaluation.repository_story",
-    "db:migrate": "uv run --project apps/api alembic -c apps/api/alembic.ini upgrade head"
+    "db:migrate": "uv run --project apps/api python -m app.migrate",
+    "maintenance": "uv run --project apps/api python -m app.workers.maintenance",
+    "smoke:container": "powershell -File scripts/container-smoke.ps1"
   }
 }

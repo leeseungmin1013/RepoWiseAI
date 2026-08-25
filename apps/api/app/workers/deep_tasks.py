@@ -12,6 +12,7 @@ from app.navigation.change_brief import generate_change_brief
 from app.services.grounded_chat import GroundedGenerationCancelled, create_grounded_message
 from app.services.research_materials import research_official_materials
 from app.services.usage import UsageContext, UsageService
+from app.workers.context import bind_worker_job_context
 
 
 def _utc_now() -> datetime:
@@ -31,6 +32,7 @@ def _task_should_continue(task_id: str) -> bool:
 
 
 def run_deep_task(task_id: str) -> None:
+    bind_worker_job_context(task_id=task_id)
     settings = get_settings()
     try:
         with SessionLocal() as db:

@@ -5,6 +5,7 @@ from rq.exceptions import DuplicateJobError, InvalidJobOperation, NoSuchJobError
 from rq.job import Job, JobStatus
 
 from app.core.config import get_settings
+from app.core.logging import current_log_context
 
 
 def get_analysis_queue() -> Queue:
@@ -16,6 +17,12 @@ def get_analysis_queue() -> Queue:
 def enqueue_repository_analysis(snapshot_id: str) -> str:
     settings = get_settings()
     job_id = f"repository-analysis-{snapshot_id}"
+    context = current_log_context()
+    metadata = {
+        key: context[key]
+        for key in ("request_id", "organization_id")
+        if key in context
+    }
     try:
         job = get_analysis_queue().enqueue(
             "app.workers.repository_analysis.analyze_repository",
@@ -25,6 +32,7 @@ def enqueue_repository_analysis(snapshot_id: str) -> str:
             job_timeout=settings.analysis_job_timeout_seconds,
             result_ttl=3600,
             failure_ttl=24 * 3600,
+            meta=metadata,
         )
     except DuplicateJobError:
         return job_id
@@ -39,6 +47,12 @@ def get_deep_task_queue() -> Queue:
 
 def enqueue_deep_task(task_id: str) -> str:
     settings = get_settings()
+    context = current_log_context()
+    metadata = {
+        key: context[key]
+        for key in ("request_id", "organization_id")
+        if key in context
+    }
     try:
         job = get_deep_task_queue().enqueue(
             "app.workers.deep_tasks.run_deep_task",
@@ -48,6 +62,7 @@ def enqueue_deep_task(task_id: str) -> str:
             job_timeout=settings.deep_task_timeout_seconds,
             result_ttl=3600,
             failure_ttl=24 * 3600,
+            meta=metadata,
         )
     except DuplicateJobError:
         return task_id

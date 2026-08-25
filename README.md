@@ -305,4 +305,5 @@ pnpm eval:story
 - [전체 프로젝트 기획서](docs/plans/01_2026-07-06_PROJECT_PLAN.md)
 - [구현 계획서](docs/plans/02_2026-07-06_IMPLEMENTATION_PLAN.md)
 - [Repository Structure First UI 개편 계획과 구현 결과](docs/plans/07_2026-07-30_REPOSITORY_STRUCTURE_FIRST_UI_REDESIGN_PLAN.md)
+- [Production packaging 실행·환경변수·rollback 계약](docs/operations/production-packaging.md)
 - [프로젝트 기획서 PDF](output/pdf/RepoWiseAI_Project_Plan.pdf)

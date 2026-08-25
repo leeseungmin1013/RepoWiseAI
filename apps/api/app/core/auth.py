@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.core.db import get_db
+from app.core.logging import bind_log_context
 from app.models import OrganizationMembership
 from app.services.identity import bootstrap_identity
 
@@ -105,12 +106,14 @@ def get_auth_context(
                 detail={"code": "authentication_required"},
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        return AuthContext(
+        context = AuthContext(
             user_id="dev-user",
             organization_id=settings.default_organization_id or "dev-org",
             role="owner",
             authenticated=False,
         )
+        bind_log_context(organization_id=context.organization_id)
+        return context
     payload = decode_access_token(credentials.credentials, settings)
     bootstrap = bootstrap_identity(
         db,
@@ -129,12 +132,14 @@ def get_auth_context(
     )
     if membership is None:
         raise HTTPException(status_code=403, detail={"code": "organization_access_denied"})
-    return AuthContext(
+    context = AuthContext(
         user_id=bootstrap.user.id,
         organization_id=membership.organization_id,
         role=membership.role,
         email=bootstrap.user.email,
     )
+    bind_log_context(organization_id=context.organization_id)
+    return context
 
 
 AuthDep = Annotated[AuthContext, Depends(get_auth_context)]

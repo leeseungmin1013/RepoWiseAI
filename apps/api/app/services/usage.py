@@ -251,7 +251,13 @@ class UsageService:
         db.commit()
         return event
 
-    def release(self, db: Session, reservation_id: str | None) -> None:
+    def release(
+        self,
+        db: Session,
+        reservation_id: str | None,
+        *,
+        commit: bool = True,
+    ) -> None:
         if not reservation_id:
             return
         reservation = db.scalar(
@@ -270,7 +276,8 @@ class UsageService:
             )
         reservation.status = "released"
         reservation.settled_at = datetime.now(UTC)
-        db.commit()
+        if commit:
+            db.commit()
 
     def calculate_cost(
         self,
@@ -331,17 +338,19 @@ class UsageService:
         db.flush()
         return grant
 
-    def release_stale(self, db: Session) -> int:
+    def release_stale(self, db: Session, *, commit: bool = True) -> int:
         now = datetime.now(UTC)
         reservations = db.scalars(
             select(UsageReservation).where(
                 UsageReservation.status == "reserved",
                 UsageReservation.expires_at < now,
                 UsageReservation.provider_request_id.is_(None),
-            )
+            ).with_for_update(skip_locked=True)
         ).all()
         for item in reservations:
-            self.release(db, item.id)
+            self.release(db, item.id, commit=False)
+        if commit:
+            db.commit()
         return len(reservations)
 
     def _period(self, db: Session, organization_id: str, *, lock: bool) -> QuotaPeriod:

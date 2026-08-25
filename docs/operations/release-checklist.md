@@ -197,3 +197,11 @@ database_evidence: <URL or artifact path>
 ```
 
 코드나 migration이 바뀌면 위 기록을 폐기하고 전체 검증 후 새 SHA를 발급한다.
+## 8. Phase 2 production packaging
+
+- API와 worker가 동일 release SHA와 Dockerfile로 빌드되었는지 image digest를 기록한다.
+- API/worker pre-deploy migration이 direct URL과 advisory lock을 사용했는지 확인한다.
+- `/api/health/live` 200, `/api/health/ready` 200, release SHA 일치를 기록한다.
+- worker의 deep→analysis queue 순서, maintenance 두 번째 no-op, SIGTERM 결과를 기록한다.
+- 이전 image digest와 배포 직전 DB backup/PITR 식별자를 함께 기록한다.
+- 비가역 migration 의존 시 downgrade하지 않고 restore 또는 forward-fix를 사용한다.

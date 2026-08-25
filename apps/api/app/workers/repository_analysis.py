@@ -52,6 +52,7 @@ from app.navigation.versions import SEMANTIC_GRAPH_VERSION
 from app.services.file_filter import collect_source_files
 from app.services.github import GitHubClient, GitHubSnapshot
 from app.services.usage import UsageContext, UsageService
+from app.workers.context import bind_worker_job_context
 
 
 def _utc_now() -> datetime:
@@ -570,6 +571,7 @@ def _resolve_parsed_edge(
 
 
 def analyze_repository(snapshot_id: str) -> None:
+    bind_worker_job_context(snapshot_id=snapshot_id)
     settings = get_settings()
     try:
         _set_stage(snapshot_id, "fetching")

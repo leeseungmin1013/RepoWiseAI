@@ -1,34 +1,93 @@
 from __future__ import annotations
 
+import json
+import logging
 from datetime import UTC, datetime
+from time import monotonic
 
-from sqlalchemy import delete
+from sqlalchemy import delete, text
 
 from app.core.config import get_settings
 from app.core.db import SessionLocal
+from app.core.logging import configure_logging
 from app.models import SemanticCacheEntry
 from app.services.usage import UsageService
 
-
-def cleanup_semantic_cache() -> int:
-    with SessionLocal() as db:
-        result = db.execute(
-            delete(SemanticCacheEntry).where(
-                SemanticCacheEntry.expires_at < datetime.now(UTC),
-                SemanticCacheEntry.hit_count == 0,
-            )
-        )
-        db.commit()
-        return int(result.rowcount or 0)
+logger = logging.getLogger(__name__)
+_MAINTENANCE_LOCK_ID = 1_380_275_023
 
 
-def release_stale_usage_reservations() -> int:
-    with SessionLocal() as db:
-        return UsageService(get_settings()).release_stale(db)
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
-def run_maintenance() -> dict[str, int]:
-    return {
-        "semantic_cache_deleted": cleanup_semantic_cache(),
-        "stale_reservations_released": release_stale_usage_reservations(),
+def run_maintenance() -> dict[str, object]:
+    started_at = _utc_now()
+    started = monotonic()
+    summary: dict[str, object] = {
+        "started_at": started_at.isoformat(),
+        "semantic_cache_deleted": 0,
+        "stale_reservations_released": 0,
     }
+    with SessionLocal() as db:
+        lock_acquired = bool(
+            db.execute(
+                text("SELECT pg_try_advisory_lock(:lock_id)"),
+                {"lock_id": _MAINTENANCE_LOCK_ID},
+            ).scalar()
+        )
+        if not lock_acquired:
+            summary.update(
+                {
+                    "finished_at": _utc_now().isoformat(),
+                    "duration_ms": round((monotonic() - started) * 1000, 2),
+                    "outcome": "skipped_concurrent_run",
+                }
+            )
+            return summary
+        try:
+            result = db.execute(
+                delete(SemanticCacheEntry).where(
+                    SemanticCacheEntry.expires_at < _utc_now(),
+                    SemanticCacheEntry.hit_count == 0,
+                )
+            )
+            summary["semantic_cache_deleted"] = int(result.rowcount or 0)
+            summary["stale_reservations_released"] = UsageService(
+                get_settings()
+            ).release_stale(db, commit=False)
+            db.commit()
+            summary["outcome"] = "success"
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.execute(
+                text("SELECT pg_advisory_unlock(:lock_id)"),
+                {"lock_id": _MAINTENANCE_LOCK_ID},
+            )
+    summary.update(
+        {
+            "finished_at": _utc_now().isoformat(),
+            "duration_ms": round((monotonic() - started) * 1000, 2),
+        }
+    )
+    return summary
+
+
+def main() -> int:
+    configure_logging()
+    try:
+        summary = run_maintenance()
+    except Exception:
+        logger.exception(
+            "maintenance_failed",
+            extra={"error_code": "maintenance_failed", "outcome": "failed"},
+        )
+        return 1
+    print(json.dumps(summary, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

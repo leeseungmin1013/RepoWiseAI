@@ -11,7 +11,13 @@ class Base(DeclarativeBase):
 
 
 settings = get_settings()
-engine = create_engine(settings.database_url, pool_pre_ping=True)
+engine = create_engine(
+    settings.database_url,
+    pool_pre_ping=True,
+    connect_args={
+        "connect_timeout": max(1, int(settings.healthcheck_timeout_seconds)),
+    },
+)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 

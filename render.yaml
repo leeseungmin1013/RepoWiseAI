@@ -1,0 +1,95 @@
+services:
+  - type: web
+    name: repowise-api
+    runtime: docker
+    region: singapore
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: >-
+      sh -c 'exec uvicorn app.main:app --host 0.0.0.0 --port "$PORT"
+      --proxy-headers --forwarded-allow-ips="*" --timeout-graceful-shutdown 240 --no-access-log'
+    preDeployCommand: python -m app.migrate
+    healthCheckPath: /api/health/ready
+    maxShutdownDelaySeconds: 300
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: SERVICE_NAME
+        value: repowise-api
+      - key: AUTH_REQUIRED
+        value: "true"
+      - key: ANALYSIS_WORKSPACE
+        value: /tmp/repowise/repositories
+      - key: HEALTHCHECK_TIMEOUT_SECONDS
+        value: "2"
+      - key: DATABASE_URL
+        sync: false
+      - key: MIGRATION_DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_JWT_ISSUER
+        sync: false
+      - key: SUPABASE_JWKS_URL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: DEFAULT_ORGANIZATION_ID
+        sync: false
+      - key: QUOTA_ENFORCEMENT_MODE
+        value: "off"
+      - key: DEFAULT_MONTHLY_ALLOWANCE_MICRO_USD
+        value: "250000"
+      - key: REALTIME_MAX_DURATION_SECONDS
+        value: "300"
+
+  - type: worker
+    name: repowise-worker
+    runtime: docker
+    region: singapore
+    preDeployCommand: python -m app.migrate
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: python -m app.workers.runner
+    maxShutdownDelaySeconds: 300
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: SERVICE_NAME
+        value: repowise-worker
+      - key: AUTH_REQUIRED
+        value: "true"
+      - key: ANALYSIS_WORKSPACE
+        value: /tmp/repowise/repositories
+      - key: DATABASE_URL
+        sync: false
+      - key: MIGRATION_DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_JWT_ISSUER
+        sync: false
+      - key: SUPABASE_JWKS_URL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: DEFAULT_ORGANIZATION_ID
+        sync: false
+      - key: QUOTA_ENFORCEMENT_MODE
+        value: "off"
+      - key: DEFAULT_MONTHLY_ALLOWANCE_MICRO_USD
+        value: "250000"
+      - key: REALTIME_MAX_DURATION_SECONDS
+        value: "300"

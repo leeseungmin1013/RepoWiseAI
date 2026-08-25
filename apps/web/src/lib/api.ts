@@ -1,3 +1,5 @@
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
 
 export type AnalysisJob = {
@@ -17,6 +19,13 @@ export type Snapshot = {
   branch: string | null;
   commit_sha: string | null;
   status: "pending" | "analyzing" | "ready" | "failed";
+  analysis_fingerprint: string | null;
+  base_snapshot_id: string | null;
+  reuse_mode: "full" | "incremental" | "exact";
+  manifest_hash: string | null;
+  change_summary: Record<string, unknown>;
+  resolved_at: string | null;
+  ready_at: string | null;
   parser_version: string;
   index_version: string;
   file_count: number;
@@ -43,6 +52,12 @@ export type Repository = {
 export type CreateRepositoryResponse = {
   repository: Repository;
   snapshot: Snapshot;
+  reuse: {
+    mode: "exact_snapshot" | "incremental" | "full";
+    cache_hit: boolean;
+    base_snapshot_id: string | null;
+    reason: string;
+  };
 };
 
 export type TreeNode = {
@@ -901,6 +916,13 @@ export type MasteryOverview = {
   recent_events: MasteryEvent[];
 };
 
+export type Organization = { id: string; name: string; slug: string; kind: string; role: string | null };
+export type Me = { user: { id: string; email: string | null; display_name: string | null }; active_organization: Organization; organizations: Organization[] };
+export type UsageCurrent = { organization_id: string; period_start: string; period_end: string; allowance_micro_usd: number; bonus_available_micro_usd: number; reserved_micro_usd: number; consumed_micro_usd: number; remaining_micro_usd: number };
+export type FeatureLimit = { feature: string; request_limit: number | null; token_limit: number | null; duration_limit_seconds: number | null; concurrent_limit: number | null; max_input_size: number | null; max_output_tokens: number | null };
+export type UsageEvent = { id: string; feature: string; provider: string | null; model: string | null; usage_json: Record<string, number>; settled_cost_micro_usd: number; cache_status: string; created_at: string };
+export type BonusCredit = { id: string; organization_id: string; amount_micro_usd: number; remaining_micro_usd: number; reason: string; reference: string; expires_at: string | null; cancelled_at: string | null; created_at: string };
+export type UsageReconciliation = { pending_reconciliation: number; stale_reservations: number; internal_settled_micro_usd: number; invalid_cache_entries: number; checked_at: string };
 class ApiError extends Error {
   constructor(
     message: string,
@@ -910,44 +932,95 @@ class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
-  });
-  if (!response.ok) {
-    let message = `Request failed with HTTP ${response.status}`;
-    try {
-      const payload = (await response.json()) as { detail?: string };
-      message = payload.detail ?? message;
-    } catch {
-      // Preserve the HTTP fallback when the response is not JSON.
+export async function authenticatedFetch(path: string, init?: RequestInit) {
+  const client = getSupabaseBrowserClient();
+  const buildHeaders = async () => {
+    const headers: Record<string, string> = {};
+    if (init?.headers instanceof Headers) {
+      init.headers.forEach((value, key) => {
+        headers[key] = value;
+      });
+    } else if (Array.isArray(init?.headers)) {
+      for (const [key, value] of init.headers) headers[key] = value;
+    } else if (init?.headers) {
+      Object.assign(headers, init.headers);
     }
-    throw new ApiError(message, response.status);
+    if (!Object.keys(headers).some((key) => key.toLowerCase() === "content-type")) {
+      headers["Content-Type"] = "application/json";
+    }
+    const session = client ? (await client.auth.getSession()).data.session : null;
+    if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
+    const organizationId =
+      typeof window !== "undefined" ? localStorage.getItem("repowise.organization") : null;
+    if (organizationId) headers["X-Organization-Id"] = organizationId;
+    return headers;
+  };
+  const url = /^https?:\/\//.test(path) ? path : `${API_URL}${path}`;
+  let response = await fetch(url, { ...init, headers: await buildHeaders() });
+  if (response.status === 401 && client) {
+    const { data } = await client.auth.refreshSession();
+    if (data.session) response = await fetch(url, { ...init, headers: await buildHeaders() });
   }
+  return response;
+}
+
+async function errorMessage(response: Response) {
+  const message = `Request failed with HTTP ${response.status}`;
+  try {
+    const payload = (await response.json()) as { detail?: string | { code?: string; message?: string } };
+    if (typeof payload.detail === "string") return payload.detail;
+    if (payload.detail?.message) return payload.detail.message;
+    if (payload.detail?.code) {
+      const messages: Record<string, string> = {
+        authentication_required: "로그인이 필요합니다.",
+        invalid_access_token: "로그인 세션이 만료되었습니다. 다시 로그인해 주세요.",
+        organization_access_denied: "이 조직의 자원에 접근할 권한이 없습니다.",
+        monthly_quota_exceeded: "이번 달 사용 한도를 초과했습니다.",
+        feature_limit_exceeded: "이 기능의 사용 한도를 초과했습니다.",
+        feature_concurrency_exceeded: "이 기능의 동시 실행 한도를 초과했습니다.",
+      };
+      return messages[payload.detail.code] ?? payload.detail.code;
+    }
+  } catch {
+    // Preserve the HTTP fallback when the response is not JSON.
+  }
+  if (response.status === 401) return "로그인이 필요합니다.";
+  if (response.status === 403) return "이 작업을 수행할 권한이 없습니다.";
+  if (response.status === 429) return "사용 한도를 초과했습니다. 잠시 후 다시 시도해 주세요.";
+  return message;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await authenticatedFetch(path, init);
+  if (!response.ok) throw new ApiError(await errorMessage(response), response.status);
   return (await response.json()) as T;
 }
 
 async function requestText(path: string, init?: RequestInit): Promise<string> {
-  const response = await fetch(`${API_URL}${path}`, init);
-  if (!response.ok) {
-    let message = `Request failed with HTTP ${response.status}`;
-    try {
-      const payload = (await response.json()) as { detail?: string };
-      message = payload.detail ?? message;
-    } catch {
-      // Preserve the HTTP fallback when the response is not JSON.
-    }
-    throw new ApiError(message, response.status);
-  }
+  const response = await authenticatedFetch(path, init);
+  if (!response.ok) throw new ApiError(await errorMessage(response), response.status);
   return response.text();
 }
-
 export const api = {
   health: () => request<Health>("/health"),
+  me: () => request<Me>("/me"),
+  organizations: () => request<Organization[]>("/organizations"),
+  currentUsage: (organizationId: string) =>
+    request<UsageCurrent>(`/organizations/${encodeURIComponent(organizationId)}/usage/current`),
+  usageEvents: (organizationId: string) =>
+    request<UsageEvent[]>(`/organizations/${encodeURIComponent(organizationId)}/usage/events`),
+  featureLimits: (organizationId: string) =>
+    request<FeatureLimit[]>(`/organizations/${encodeURIComponent(organizationId)}/limits`),
+  grantBonusCredit: (
+    organizationId: string,
+    payload: { amount_micro_usd: number; reason: string; reference: string; expires_at?: string },
+  ) =>
+    request<BonusCredit>(
+      `/admin/organizations/${encodeURIComponent(organizationId)}/bonus-credits`,
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
+  usageReconciliation: () =>
+    request<UsageReconciliation>("/admin/usage/reconciliation"),
   createRepository: (url: string, branch?: string) =>
     request<CreateRepositoryResponse>("/repositories", {
       method: "POST",

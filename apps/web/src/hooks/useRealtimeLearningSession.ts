@@ -30,6 +30,7 @@ export type UseRealtimeLearningSessionOptions = {
   onFinalTranscript?: (transcript: string) => void;
   /** Test seam. Production callers should use the browser default. */
   createPeerConnection?: (configuration?: RTCConfiguration) => RTCPeerConnection;
+  maxDurationSeconds?: number;
 };
 
 export type RealtimeLearningSession = {
@@ -84,6 +85,8 @@ export function useRealtimeLearningSession({
   onRealtimeEvent,
   onFinalTranscript,
   createPeerConnection,
+  maxDurationSeconds =
+    Number(process.env.NEXT_PUBLIC_REALTIME_MAX_DURATION_SECONDS ?? 300) || 300,
 }: UseRealtimeLearningSessionOptions): RealtimeLearningSession {
   const [status, setStatus] = useState<VoiceSessionStatus>("idle");
   const [connectionState, setConnectionState] =
@@ -101,6 +104,7 @@ export function useRealtimeLearningSession({
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const remoteAudioElementRef = useRef<HTMLAudioElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const durationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const exchangeSdpRef = useRef(exchangeSdp);
   const eventHandlerRef = useRef(onRealtimeEvent);
@@ -133,6 +137,10 @@ export function useRealtimeLearningSession({
   }, []);
 
   const disposeResources = useCallback(() => {
+    if (durationTimerRef.current) {
+      clearTimeout(durationTimerRef.current);
+      durationTimerRef.current = null;
+    }
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
 
@@ -347,12 +355,18 @@ export function useRealtimeLearningSession({
       if (dataChannel.readyState === "open") {
         updateStatus("ready");
       }
+      durationTimerRef.current = setTimeout(() => {
+        if (peerRef.current !== peer) return;
+        disposeResources();
+        if (mountedRef.current) setConnectionState("closed");
+        updateStatus("stopped");
+      }, Math.max(1, maxDurationSeconds) * 1000);
     } catch (value) {
       if (!abortController.signal.aborted) {
         fail(value);
       }
     }
-  }, [disposeResources, fail, updateStatus]);
+  }, [disposeResources, fail, maxDurationSeconds, updateStatus]);
 
   const sendEvent = useCallback((event: RealtimeEvent) => {
     const dataChannel = dataChannelRef.current;

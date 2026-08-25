@@ -94,12 +94,18 @@ const STAGE_LABELS: Record<string, string> = {
 type MobilePane = "tree" | "code" | "guide";
 type WorkspaceMode = "map" | "flow" | "explorer" | "change" | "learning";
 
+function summaryMetric(summary: Record<string, unknown> | undefined, key: string) {
+  const value = summary?.[key];
+  return typeof value === "number" ? value : 0;
+}
+
 export function RepositoryWorkbench() {
   const architectureLabelEnhancementEnabled =
     process.env.NEXT_PUBLIC_NAVIGATION_LLM_LABELS_ENABLED === "true";
   const [repositoryUrl, setRepositoryUrl] = useState("");
   const [branch, setBranch] = useState("");
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [reuseNotice, setReuseNotice] = useState<string | null>(null);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [health, setHealth] = useState<Health | null>(null);
   const [profile, setProfile] = useState<LearnerProfile | null>(null);
@@ -656,6 +662,15 @@ export function RepositoryWorkbench() {
     resetRepositoryState();
     try {
       const response = await api.createRepository(repositoryUrl, branch);
+      setReuseNotice(
+        response.reuse?.mode === "exact_snapshot"
+          ? "기존 분석을 즉시 재사용했습니다."
+          : response.reuse?.mode === "incremental"
+            ? "변경 파일 중심으로 증분 분석합니다."
+            : response.reuse
+              ? "전체 저장소를 분석합니다."
+              : null,
+      );
       setSnapshot(response.snapshot);
       setSnapshots((current) => [
         response.snapshot,
@@ -1358,6 +1373,7 @@ export function RepositoryWorkbench() {
         {snapshot ? (
           <div className="analysis-progress" aria-live="polite">
             <div className="progress-copy">
+              {reuseNotice ? <small>{reuseNotice}</small> : null}
               {snapshot.status === "ready" ? (
                 <CheckCircle2 aria-hidden size={16} />
               ) : snapshot.status === "failed" ? (
@@ -1374,6 +1390,17 @@ export function RepositoryWorkbench() {
                 <small>
                   {snapshot.file_count} files · {snapshot.symbol_count} symbols ·{" "}
                   {snapshot.chunk_count} chunks
+                  {snapshot.reuse_mode !== "full" ? (
+                    <>
+                      {" "}· 변경 {summaryMetric(snapshot.change_summary, "direct_changed_files")}
+                      개 · parse 재사용 {summaryMetric(snapshot.change_summary, "parse_reused")}
+                      개 · embedding 재사용 {summaryMetric(
+                        snapshot.change_summary,
+                        "embedding_reused",
+                      )}
+                      개
+                    </>
+                  ) : null}
                 </small>
               ) : null}
             </div>

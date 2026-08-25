@@ -19,6 +19,8 @@
 - 월 총예산 상한은 USD 10을 유지한다. Render API는 free, worker는 starter, Key Value와 Supabase는 free를 기준으로 한다.
 - Render는 월 전체 청구액 hard cap을 제공하지 않음을 확인했다. build pipeline 추가 spend limit은 USD 0으로 설정하고 API/worker를 각각 1 instance, preview off, autoscaling off로 고정한다. 결제수단 등록 시 포함량을 넘은 outbound bandwidth에 소액 추가 과금될 가능성은 2026-08-25 프로젝트 소유자가 승인한 예외로 수용하되, 월 USD 10 도달 전에 billing 알림을 확인하고 서비스를 suspend한다.
 - 백업 dump에는 사용자 데이터와 secret 성격의 내용이 포함될 수 있으므로 Git에 넣지 않고 접근 통제된 외장 또는 암호화 저장소에 보관한다.
+- Render는 IPv4-only이므로 Supabase direct IPv6 endpoint 대신 session pooler(5432)를 runtime과 migration에 사용한다. session mode의 전용 연결에서 Alembic DDL과 advisory lock을 실행한다.
+- Google/GitHub OAuth는 Client ID/Secret 미보유로 보류하고 email/password를 우선 사용한다. Render에는 승인된 OPENAI_API_KEY만 저장하며 GITHUB_TOKEN 없이 public repository 분석만 제공한다.
 
 예외 해제 조건은 월 예산 상향 승인이다. 해제 시 우선순위는 production Key Value의 유료 persistent plan 전환, Supabase 자동 backup, cloud staging 분리, PITR 순이다.
 

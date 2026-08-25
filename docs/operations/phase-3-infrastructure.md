@@ -28,9 +28,9 @@ Render Key Value는 queue 용도이므로 maxmemoryPolicy=noeviction을 사용�
 
 1. 기존 RepoWiseAI project의 강한 DB password를 password manager에 보관하고 접근자를 제한한다.
 2. vector extension을 활성화하고 migration 계정이 extension 생성·DDL·advisory lock을 실행할 수 있는지 확인한다.
-3. MIGRATION_DATABASE_URL에는 direct connection URL을 사용한다. IPv4-only Docker backup에는 Supabase 권장 session pooler URL을 사용한다.
+3. local migration은 direct connection URL을 사용한다. Render와 IPv4-only Docker backup은 Supabase 권장 session pooler URL(5432)을 사용한다. Render는 IPv4-only이므로 worker의 MIGRATION_DATABASE_URL도 session pooler로 설정하며, session mode의 전용 연결에서 DDL과 advisory lock을 실행한다.
 4. API/worker DATABASE_URL에는 SQLAlchemy sync psycopg가 사용할 session pooler URL을 사용한다. transaction pooler는 advisory lock 계약과 맞지 않으므로 사용하지 않는다.
-5. Auth에서 email/password, email confirmation, password reset, Google OAuth, GitHub OAuth만 활성화한다.
+5. Auth에서 email/password, email confirmation, password reset을 활성화한다. Google/GitHub OAuth는 2026-08-25 현재 Client ID/Secret이 없어 보류하며 자격 증명 확보 후 활성화한다.
 6. asymmetric signing key를 current로 두고 audience=authenticated, issuer, JWKS URL을 server secret store에 설정한다.
 7. local redirect는 http://localhost:3000/auth/callback 및 forgot-password 흐름을 허용한다. Vercel production URL이 생기면 해당 origin의 /auth/callback과 /forgot-password만 추가한다.
 8. 브라우저에는 NEXT_PUBLIC_SUPABASE_URL과 publishable key만 제공한다. secret/service-role key는 만들거나 배포할 필요가 없다.
@@ -40,6 +40,8 @@ Render Key Value는 queue 용도이므로 maxmemoryPolicy=noeviction을 사용�
 render.yaml은 repowise-queue를 free, noeviction, persistence off, ipAllowList=[]로 선언한다. API와 worker의 REDIS_URL은 fromService.connectionString으로 연결되어 외부 URL을 사용하지 않는다.
 
 API free plan은 pre-deploy command를 지원하지 않는다. migration은 유료 starter worker의 preDeployCommand가 direct URL과 advisory lock으로 실행한다. API readiness는 DB schema head가 0016이 아니면 503을 반환한다.
+2026-08-25 임시 배포는 로컬 OPENAI_API_KEY를 Render secret으로 저장하고 GITHUB_TOKEN 없이 public repository만 분석한다. private repository 지원은 별도 GitHub token을 발급한 뒤 활성화한다.
+
 
 worker 시작 시 app.workers.queue_recovery.recover_queue_jobs가 다음을 수행한다.
 

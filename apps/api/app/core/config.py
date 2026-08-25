@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     deep_escalation_reasoning_effort: str = "high"
     deep_task_timeout_seconds: int = 180
     deep_queue_name: str = "repowise-deep-learning"
+    queue_recovery_stale_seconds: int = 900
+    queue_recovery_batch_size: int = 500
     research_model: str = "gpt-5.6-terra"
     research_reasoning_effort: str = "medium"
     research_allowed_domains: str = (

@@ -19,5 +19,8 @@
     "db:migrate": "uv run --project apps/api python -m app.migrate",
     "maintenance": "uv run --project apps/api python -m app.workers.maintenance",
     "smoke:container": "powershell -File scripts/container-smoke.ps1"
+  },
+  "devDependencies": {
+    "supabase": "2.115.0"
   }
 }

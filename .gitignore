@@ -19,6 +19,7 @@ node_modules/
 .pnpm-store/
 .next/
 dist/
+supabase/.temp/
 build/
 coverage/
 pnpm-debug.log*
@@ -26,6 +27,7 @@ pnpm-debug.log*
 # Local analysis data
 .data/
 analysis-workspaces/
+backups/
 
 # Environment
 .env

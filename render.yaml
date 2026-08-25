@@ -1,17 +1,26 @@
 services:
+  - type: keyvalue
+    name: repowise-queue
+    region: singapore
+    plan: free
+    ipAllowList: []
+    maxmemoryPolicy: noeviction
+    persistenceMode: off
+
   - type: web
     name: repowise-api
     runtime: docker
     region: singapore
-    plan: starter
+    plan: free
+    numInstances: 1
+    previews:
+      generation: off
     dockerfilePath: ./Dockerfile
     dockerContext: .
     dockerCommand: >-
       sh -c 'exec uvicorn app.main:app --host 0.0.0.0 --port "$PORT"
       --proxy-headers --forwarded-allow-ips="*" --timeout-graceful-shutdown 240 --no-access-log'
-    preDeployCommand: python -m app.migrate
     healthCheckPath: /api/health/ready
-    maxShutdownDelaySeconds: 300
     envVars:
       - key: APP_ENV
         value: production
@@ -28,7 +37,10 @@ services:
       - key: MIGRATION_DATABASE_URL
         sync: false
       - key: REDIS_URL
-        sync: false
+        fromService:
+          type: keyvalue
+          name: repowise-queue
+          property: connectionString
       - key: CORS_ORIGINS
         sync: false
       - key: SUPABASE_URL
@@ -56,6 +68,9 @@ services:
     region: singapore
     preDeployCommand: python -m app.migrate
     plan: starter
+    numInstances: 1
+    previews:
+      generation: off
     dockerfilePath: ./Dockerfile
     dockerContext: .
     dockerCommand: python -m app.workers.runner
@@ -74,7 +89,10 @@ services:
       - key: MIGRATION_DATABASE_URL
         sync: false
       - key: REDIS_URL
-        sync: false
+        fromService:
+          type: keyvalue
+          name: repowise-queue
+          property: connectionString
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_JWT_ISSUER
@@ -93,3 +111,7 @@ services:
         value: "250000"
       - key: REALTIME_MAX_DURATION_SECONDS
         value: "300"
+      - key: QUEUE_RECOVERY_STALE_SECONDS
+        value: "900"
+      - key: QUEUE_RECOVERY_BATCH_SIZE
+        value: "500"

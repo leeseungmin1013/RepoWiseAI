@@ -14,7 +14,7 @@ def get_analysis_queue() -> Queue:
     return Queue(settings.queue_name, connection=connection)
 
 
-def enqueue_repository_analysis(snapshot_id: str) -> str:
+def enqueue_repository_analysis(snapshot_id: str, *, queue: Queue | None = None) -> str:
     settings = get_settings()
     job_id = f"repository-analysis-{snapshot_id}"
     context = current_log_context()
@@ -24,7 +24,7 @@ def enqueue_repository_analysis(snapshot_id: str) -> str:
         if key in context
     }
     try:
-        job = get_analysis_queue().enqueue(
+        job = (queue or get_analysis_queue()).enqueue(
             "app.workers.repository_analysis.analyze_repository",
             snapshot_id,
             job_id=job_id,
@@ -45,7 +45,7 @@ def get_deep_task_queue() -> Queue:
     return Queue(settings.deep_queue_name, connection=connection)
 
 
-def enqueue_deep_task(task_id: str) -> str:
+def enqueue_deep_task(task_id: str, *, queue: Queue | None = None) -> str:
     settings = get_settings()
     context = current_log_context()
     metadata = {
@@ -54,7 +54,7 @@ def enqueue_deep_task(task_id: str) -> str:
         if key in context
     }
     try:
-        job = get_deep_task_queue().enqueue(
+        job = (queue or get_deep_task_queue()).enqueue(
             "app.workers.deep_tasks.run_deep_task",
             task_id,
             job_id=task_id,

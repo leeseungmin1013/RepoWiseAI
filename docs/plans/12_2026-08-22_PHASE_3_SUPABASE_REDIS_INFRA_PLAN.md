@@ -6,6 +6,22 @@
 - 예상 기간: 1~2일
 - 선행 조건: region·예산 결정, Phase 2 실행 계약
 
+## 0. 2026-08-25 승인 예외와 실행 기준
+
+이 절은 2026-08-25 프로젝트 소유자의 승인을 반영하며, 아래 항목에 한해 본 계획의 staging/production 완전 분리·Redis persistence·Supabase PITR 요구보다 우선한다.
+
+- cloud에는 production-like 환경 하나만 둔다. staging은 local Docker Compose 또는 배포 시점의 ephemeral 환경으로 운영하며 production credential을 사용하지 않는다.
+- 새 Seoul project를 만들지 않고 2026-08-25 확인된 기존 RepoWiseAI Supabase project(ap-south-1, Mumbai, Free)를 production-like 환경으로 재사용한다. 이는 Phase 0의 Seoul 동일 권역 원칙에 대한 승인된 지역 예외이며, Render Singapore와의 cross-region latency 가능성을 임시로 수용한다.
+- Supabase 무료 plan에 없는 자동 backup/PITR 대신 매일 수동 logical custom-format dump와 checksum을 만들고, 분기마다 격리된 pgvector PostgreSQL에서 restore drill을 수행한다.
+- Render는 Singapore의 무료 Key Value 하나를 사용한다. maxmemoryPolicy=noeviction, persistenceMode=off, 외부 IP 차단, 내부 URL 연결을 적용한다.
+- Key Value 인스턴스가 재시작·점검·업그레이드되면 모든 RQ 데이터가 사라질 수 있음을 승인된 임시 위험으로 수용한다. API/worker 프로세스만 재시작되고 Key Value가 유지되는 경우에는 이 위험이 발생하지 않는다.
+- queue 복구의 source of truth는 PostgreSQL의 AnalysisJob과 DeepTask다. worker 시작 시 queued 작업과 timeout을 넘긴 running 작업을 deterministic job ID로 다시 enqueue한다.
+- 월 총예산 상한은 USD 10을 유지한다. Render API는 free, worker는 starter, Key Value와 Supabase는 free를 기준으로 한다.
+- Render는 월 전체 청구액 hard cap을 제공하지 않음을 확인했다. build pipeline 추가 spend limit은 USD 0으로 설정하고 API/worker를 각각 1 instance, preview off, autoscaling off로 고정한다. 결제수단 등록 시 포함량을 넘은 outbound bandwidth에 소액 추가 과금될 가능성은 2026-08-25 프로젝트 소유자가 승인한 예외로 수용하되, 월 USD 10 도달 전에 billing 알림을 확인하고 서비스를 suspend한다.
+- 백업 dump에는 사용자 데이터와 secret 성격의 내용이 포함될 수 있으므로 Git에 넣지 않고 접근 통제된 외장 또는 암호화 저장소에 보관한다.
+
+예외 해제 조건은 월 예산 상향 승인이다. 해제 시 우선순위는 production Key Value의 유료 persistent plan 전환, Supabase 자동 backup, cloud staging 분리, PITR 순이다.
+
 ## 1. 리소스 원칙
 
 - staging과 production은 Supabase project, Render Key Value, password, URL, JWT 설정을 공유하지 않는다.

@@ -4,7 +4,7 @@
 
 ## Topology와 실행 명령
 
-API와 worker는 repository root의 동일 `Dockerfile`과 동일 Git commit으로 빌드한다. Render Blueprint는 두 서비스 모두 Singapore `starter` plan을 사용한다. 분석 workspace는 `/tmp/repowise/repositories`이며 재시작 시 사라지는 작업 공간이다.
+API와 worker는 repository root의 동일 Dockerfile과 동일 Git commit으로 빌드한다. USD 10 상한에 따라 Render API는 Singapore free, worker는 Singapore starter, Key Value는 free/noeviction/non-persistent plan을 사용한다. 분석 workspace는 /tmp/repowise/repositories이며 재시작 시 사라지는 작업 공간이다.
 
 | 역할 | 명령 | 종료 계약 |
 | --- | --- | --- |

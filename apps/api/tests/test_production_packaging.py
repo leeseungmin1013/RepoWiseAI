@@ -116,6 +116,7 @@ def test_worker_subscribes_deep_queue_before_analysis(monkeypatch):
         def work(self, **kwargs):
             captured["work"] = kwargs
 
+    monkeypatch.setattr(runner, "recover_queue_jobs", lambda: {"outcome": "success"})
     monkeypatch.setattr(runner, "Redis", SimpleNamespace(from_url=lambda _url: "redis"))
     monkeypatch.setattr(runner, "Worker", WorkerStub)
     monkeypatch.setattr(runner.os, "name", "posix")

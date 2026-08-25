@@ -54,6 +54,10 @@ worker 시작 시 app.workers.queue_recovery.recover_queue_jobs가 다음을 수
 
     uv run --project apps/api --locked python -m app.workers.queue_recovery
 
+운영 Redis 전량 유실 훈련은 프로젝트 소유자의 명시적 승인 후에만 실행한다. 아래 명령은 DB와 두 RQ queue에 queued/running/reasoning 작업이 하나라도 있으면 `FLUSHDB` 전에 중단한다.
+
+    python -m app.workers.redis_recovery_drill --confirm-flushdb
+
 ## 매일 수동 logical backup
 
 백업 담당자는 매일 session pooler URL을 MIGRATION_DATABASE_URL로 현재 shell 환경에만 설정하고, 암호화된 외장/동기화 저장소를 OutputDirectory로 지정한다.
@@ -80,20 +84,21 @@ archive에는 Supabase 관리 스키마와 application public 스키마가 함�
 ## 완료 검증
 
 - [x] 기존 Supabase production-like project가 Mumbai(ap-south-1)/Free로 확인되고 지역 예외가 승인됨
-- [ ] email confirmation, reset, Google/GitHub OAuth, asymmetric key/JWKS가 설정됨
-- [ ] direct migration과 session pooler runtime URL이 각 secret store에 분리 저장됨
-- [ ] migration 0016, vector extension/index/query가 성공함
-- [ ] Render repowise-queue가 Singapore/Free/noeviction/off/외부 차단으로 생성됨
-- [ ] 두 RQ queue enqueue/dequeue 및 DB 완료 상태 round trip이 성공함
-- [ ] Redis flush 후 queued/stale job 재큐잉 smoke test가 성공함
-- [ ] 정상·만료·잘못된 audience·다른 issuer token 검증이 성공함
-- [ ] 최초 인증의 user/personal organization/membership bootstrap이 idempotent함
-- [ ] 실제 production-like dump 1개와 restore drill이 성공함
-- [ ] client bundle/API/log secret scan이 성공함
+- [x] email/password 실제 로그인과 asymmetric key/JWKS 검증이 성공함
+- [ ] email confirmation/reset 실제 메일 흐름과 Google/GitHub OAuth가 설정됨(OAuth credential 미보유 승인 보류)
+- [x] local direct migration URL과 Render session pooler runtime/migration URL이 각 secret store에 저장됨
+- [x] migration 0016, vector extension/index/query가 성공함
+- [x] Render repowise-queue가 Singapore/Free/noeviction/off/외부 차단으로 생성됨
+- [x] 두 RQ queue enqueue/dequeue cloud round trip이 성공함
+- [x] Redis 실제 flush, worker 재시작, 시작 시 DB 기반 복구, 재시작 후 queue round trip이 성공함
+- [x] 실제 정상 token 승인과 무토큰 거부, 자동 테스트의 만료·잘못된 audience·다른 issuer 거부가 성공함
+- [x] 최초 인증의 user/personal organization/membership bootstrap이 idempotent함
+- [x] 실제 production-like dump 1개와 restore drill이 성공함
+- [x] client bundle/API/log secret scan이 성공함
 
 credential 노출 시 해당 환경 DB password 또는 signing/OAuth key를 회전하고 API/worker/Web을 재배포한다. queue 소실은 credential 사고가 아니며 DB 기반 복구를 먼저 실행한다.
 
-## 2026-08-25 local/기존 Auth 검증 기록
+## 2026-08-25 실행 기록
 
 | 검증 | 결과 |
 | --- | --- |
@@ -102,10 +107,18 @@ credential 노출 시 해당 환경 DB password 또는 signing/OAuth key를 회�
 | RQ round trip | repowise-analysis와 repowise-deep-learning 모두 finished |
 | Key Value 소실 시뮬레이션 | Redis 전량 초기화 후 DB queued 작업 2개 재큐잉 성공 |
 | stale 복구 | analysis running과 deep reasoning을 stale 처리 후 queued 재큐잉 성공 |
-| logical backup | custom-format dump 179432 bytes와 SHA-256 manifest 생성 성공 |
-| restore drill | 임시 pgvector DB 복원, migration 0016, vector query 성공 |
+| production-like migration | 기존 Mumbai project에서 0001부터 0016_backfill_and_constraints까지 성공 |
+| logical backup | production-like custom-format dump 391554 bytes와 SHA-256 manifest 생성 성공 |
+| restore drill | 격리 pgvector PostgreSQL에 public schema 복원, migration 0016, vector 0.8.5 query 성공 |
 | 기존 Supabase Auth | password login, 실제 JWKS 승인, identity bootstrap 2회 idempotency 성공 |
 | 인증 negative | 무토큰 401, 변조 signature 401 성공 |
-| 회귀 테스트 | API 163 passed, Web 102 passed, lint 성공 |
+| Render 배포 | repowise-api와 repowise-worker live, API live/ready 200, 무토큰 /api/me 401 |
+| Render Key Value | Singapore Free, noeviction, persistence off, 외부 연결 차단 확인 |
+| cloud RQ round trip | repowise-analysis와 repowise-deep-learning 모두 finished |
+| cloud Redis 유실 훈련 | 활성 DB/RQ 작업 0 확인, Redis key 6개 flush, DB 복구 성공, worker 재시작 복구 성공 |
+| 재시작 후 cloud RQ | 두 queue 모두 finished |
+| 비용 통제 | build pipeline 추가 spend limit USD 0, 각 service 1 instance, preview/autoscaling off 확인 |
+| secret scan | tracked source/client static/API log/worker log 고위험 패턴 0건 |
+| 회귀 테스트 | API 165 passed, Web 102 passed, API/Web lint와 Web production build 성공 |
 
-위 Supabase 결과는 기존 Phase 1 테스트 프로젝트에 대한 검증이다. 해당 프로젝트를 production-like로 재사용할지 새 프로젝트를 만들지는 프로젝트 소유자 확인 전까지 완료 처리하지 않는다.
+Google/GitHub OAuth와 production Web redirect는 각각 OAuth credential과 production Web URL 확보 전까지 승인된 보류 항목이다. 무료 Key Value persistence와 provider 자동 backup/PITR는 이 계획 0절의 승인 예외를 따른다.

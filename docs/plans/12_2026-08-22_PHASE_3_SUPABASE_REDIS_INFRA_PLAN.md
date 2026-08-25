@@ -85,11 +85,13 @@ Redis는 cache만이 아니라 작업 전달 계층이므로 임의 eviction으�
 
 ## 6. 완료 게이트와 복구
 
-- [ ] staging/production 리소스와 credential이 물리적으로 분리되었다.
-- [ ] 실제 access token을 FastAPI JWKS 검증으로 승인한다.
-- [ ] 만료·잘못된 audience·다른 project token을 거부한다.
-- [ ] staging migration `0016`과 pgvector smoke test가 성공한다.
-- [ ] 두 RQ queue에서 enqueue/dequeue가 성공한다.
-- [ ] backup/PITR, Redis persistence/eviction, secret 소유자가 기록되었다.
+- [x] 승인 예외에 따라 cloud production-like 1개와 local/ephemeral staging으로 분리했다.
+- [x] 실제 access token을 FastAPI JWKS 검증으로 승인했다.
+- [x] 자동 검증에서 만료·잘못된 audience·다른 issuer token을 거부했다.
+- [x] production-like migration `0016`과 격리 restore의 pgvector smoke test가 성공했다.
+- [x] 실제 Render의 두 RQ queue에서 enqueue/dequeue가 성공했다.
+- [x] backup/PITR 예외, Redis persistence/eviction 예외, secret 소유자를 기록했다.
+
+Google/GitHub OAuth와 production Web redirect는 OAuth credential과 production Web URL이 없으므로 승인된 보류 항목이다. email/password 실제 인증과 identity bootstrap은 검증했다.
 
 credential 노출 시 해당 환경 key/password를 즉시 회전하고 배포를 재시작한다. migration 실패 시 API/worker를 올리지 않고 staging DB를 재생성하거나 backup으로 복구한 뒤 원인을 수정한다.

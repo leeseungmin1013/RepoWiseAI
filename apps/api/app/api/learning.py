@@ -7,6 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+from app.ai.gateway import extract_usage
+from app.core.auth import AuthDep
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.learning.activities import ensure_learning_activity
@@ -61,6 +63,7 @@ from app.schemas import (
     RemediationBranchResponse,
     RemediationCreate,
 )
+from app.services.usage import UsageContext, UsageService
 
 router = APIRouter(tags=["adaptive-learning"])
 SessionDep = Annotated[Session, Depends(get_db)]
@@ -472,19 +475,62 @@ def get_mastery_overview(profile_id: str, db: SessionDep):
 def get_line_explanation(
     step_id: str,
     db: SessionDep,
+    auth: AuthDep,
     depth: Annotated[str, Query(pattern="^(beginner|standard|advanced)$")] = "beginner",
 ):
+    settings = get_settings()
+    usage: dict[str, int] = {}
+
+    def record(provider_response, *, embedding: bool = False) -> None:
+        measured = extract_usage(provider_response, embedding=embedding).as_dict()
+        for key, value in measured.items():
+            usage[key] = usage.get(key, 0) + value
+
+    context = (
+        UsageContext(
+            organization_id=auth.organization_id,
+            user_id=auth.user_id,
+            feature="deep_explanation",
+            request_id=f"line-explanation:{step_id}:{depth}",
+            idempotency_key=f"line-explanation:{step_id}:{depth}",
+        )
+        if auth.authenticated
+        else None
+    )
+    reservation = (
+        UsageService(settings).reserve(
+            db,
+            context=context,
+            estimated_cost_micro_usd=settings.chat_generation_reservation_micro_usd,
+        )
+        if context
+        else None
+    )
     try:
         artifact, step, file, mode = get_or_create_line_explanation(
             db,
             step_id=step_id,
             depth_band=depth,
-            settings=get_settings(),
+            settings=settings,
+            recorder=record,
         )
         db.commit()
     except ValueError as exc:
         db.rollback()
+        if reservation is not None:
+            UsageService(settings).release(db, reservation.id)
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if context and mode == "openai":
+        UsageService(settings).settle(
+            db,
+            reservation_id=reservation.id if reservation else None,
+            context=context,
+            provider="openai",
+            model=settings.generation_model,
+            usage=usage,
+        )
+    elif reservation is not None:
+        UsageService(settings).release(db, reservation.id)
     return LineExplanationResponse(
         artifact_id=artifact.id,
         step_id=step.id,

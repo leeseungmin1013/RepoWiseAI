@@ -36,6 +36,19 @@ class AnalysisJobResponse(BaseModel):
     finished_at: datetime | None
 
 
+class ReuseSummary(BaseModel):
+    mode: Literal["exact_snapshot", "incremental", "full"]
+    cache_hit: bool
+    base_snapshot_id: str | None = None
+    reason: str
+
+
+class CacheSummary(BaseModel):
+    retrieval: Literal["miss", "exact_hit", "semantic_hit"] = "miss"
+    generation: Literal["miss", "exact_hit", "semantic_hit"] = "miss"
+    similarity: float | None = None
+
+
 class SnapshotResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -44,6 +57,13 @@ class SnapshotResponse(BaseModel):
     branch: str | None
     commit_sha: str | None
     status: str
+    analysis_fingerprint: str | None = None
+    base_snapshot_id: str | None = None
+    reuse_mode: str = "full"
+    manifest_hash: str | None = None
+    change_summary: dict = Field(default_factory=dict)
+    resolved_at: datetime | None = None
+    ready_at: datetime | None = None
     parser_version: str
     index_version: str
     file_count: int
@@ -61,6 +81,7 @@ class SnapshotResponse(BaseModel):
 class RepositoryCreateResponse(BaseModel):
     repository: RepositorySummary
     snapshot: SnapshotResponse
+    reuse: ReuseSummary
 
 
 class TreeNode(BaseModel):
@@ -565,6 +586,9 @@ class ChatAnswerResponse(BaseModel):
     generation_mode: str
     model_name: str | None
     created_at: datetime
+    cache: CacheSummary | None = Field(default=None, exclude_if=lambda value: value is None)
+    usage: dict | None = Field(default=None, exclude_if=lambda value: value is None)
+    quota: dict | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class DeepTaskCreate(BaseModel):
@@ -1014,3 +1038,82 @@ class RetrievalRunDebug(BaseModel):
     latency_ms: int
     created_at: datetime
     candidates: list[RetrievalCandidateDebug]
+
+
+class UserResponse(BaseModel):
+    id: str
+    email: str | None = None
+    display_name: str | None = None
+
+
+class OrganizationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    slug: str
+    kind: str
+    role: str | None = None
+
+
+class MeResponse(BaseModel):
+    user: UserResponse
+    active_organization: OrganizationResponse
+    organizations: list[OrganizationResponse]
+
+
+class UsageCurrentResponse(BaseModel):
+    organization_id: str
+    period_start: datetime
+    period_end: datetime
+    allowance_micro_usd: int
+    bonus_available_micro_usd: int
+    reserved_micro_usd: int
+    consumed_micro_usd: int
+    remaining_micro_usd: int
+
+
+class UsageEventResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    feature: str
+    provider: str | None
+    model: str | None
+    usage_json: dict
+    settled_cost_micro_usd: int
+    cache_status: str
+    created_at: datetime
+
+
+class FeatureLimitResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    feature: str
+    request_limit: int | None
+    token_limit: int | None
+    duration_limit_seconds: int | None
+    concurrent_limit: int | None
+    max_input_size: int | None
+    max_output_tokens: int | None
+
+
+class BonusCreditCreate(BaseModel):
+    amount_micro_usd: int = Field(gt=0)
+    reason: str = Field(min_length=2, max_length=2_000)
+    reference: str = Field(min_length=1, max_length=240)
+    expires_at: datetime | None = None
+
+
+class BonusCreditResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    organization_id: str
+    amount_micro_usd: int
+    remaining_micro_usd: int
+    reason: str
+    reference: str
+    expires_at: datetime | None
+    cancelled_at: datetime | None
+    created_at: datetime

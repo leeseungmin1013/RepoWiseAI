@@ -5,7 +5,7 @@ import re
 import shutil
 import tarfile
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
@@ -14,7 +14,20 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import selectinload
 
 from app.ai.embeddings import build_embedder
+from app.analysis.artifact_cache import (
+    embed_documents_with_cache,
+    ensure_source_blob,
+    load_or_create_parse_artifact,
+    text_hash,
+)
 from app.analysis.chunking import SymbolSpan, build_file_chunks
+from app.analysis.incremental import choose_incremental_mode, dependency_closure
+from app.analysis.manifest import (
+    ManifestEntry,
+    build_manifest,
+    diff_manifests,
+    manifest_hash,
+)
 from app.analysis.python import PythonAnalyzer
 from app.analysis.typescript import ParsedEdge, ParseResult, TypeScriptAnalyzer
 from app.core.config import get_settings
@@ -23,17 +36,22 @@ from app.core.ids import new_id
 from app.guidance.path_builder import ensure_guided_path
 from app.models import (
     AnalysisJob,
+    ChunkTemplate,
     CodeChunk,
+    EmbeddingCache,
     FileRecord,
     GuidedPath,
     NavigationArtifact,
     RepositorySnapshot,
+    SnapshotFileLineage,
+    SnapshotManifest,
     Symbol,
     SymbolEdge,
 )
 from app.navigation.versions import SEMANTIC_GRAPH_VERSION
 from app.services.file_filter import collect_source_files
-from app.services.github import GitHubClient
+from app.services.github import GitHubClient, GitHubSnapshot
+from app.services.usage import UsageContext, UsageService
 
 
 def _utc_now() -> datetime:
@@ -243,12 +261,7 @@ def _next_route_request_path(file_path: str) -> str | None:
 
     url_segments: list[str] = []
     for segment in parts[app_index + 1 : -1]:
-        if (
-            "[" in segment
-            or "]" in segment
-            or segment.startswith("@")
-            or segment.startswith("_")
-        ):
+        if "[" in segment or "]" in segment or segment.startswith("@") or segment.startswith("_"):
             return None
         if segment.startswith("(") and segment.endswith(")"):
             continue
@@ -334,9 +347,7 @@ def _build_route_handler_index(
                 target_symbol_id = symbol_ids.get(symbol.qualified_name)
                 if not target_symbol_id:
                     continue
-                methods = {
-                    str(method).upper() for method in metadata.get("http_methods", [])
-                }
+                methods = {str(method).upper() for method in metadata.get("http_methods", [])}
                 paths = {
                     _route_key_path(str(path))
                     for path in metadata.get("request_paths", [])
@@ -363,17 +374,14 @@ def _build_route_handler_index(
             exported_methods = {
                 name.upper()
                 for name in symbol.exported_names
-                if name.upper()
-                in {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}
+                if name.upper() in {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}
             }
             if symbol.kind != "route" or not exported_methods:
                 continue
             target_symbol_id = symbol_ids.get(symbol.qualified_name)
             if target_symbol_id:
                 for http_method in sorted(exported_methods):
-                    candidates[
-                        (package_root, _route_key_path(request_path), http_method)
-                    ].append(
+                    candidates[(package_root, _route_key_path(request_path), http_method)].append(
                         _RouteHandler(
                             package_root=package_root,
                             request_path=request_path,
@@ -383,11 +391,7 @@ def _build_route_handler_index(
                         )
                     )
 
-    return {
-        key: handlers[0]
-        for key, handlers in candidates.items()
-        if len(handlers) == 1
-    }
+    return {key: handlers[0] for key, handlers in candidates.items() if len(handlers) == 1}
 
 
 def _resolve_local_symbol_id(
@@ -457,9 +461,7 @@ def _resolve_parsed_edge(
     if parsed_edge.relation == "IMPORTS":
         target_path = _resolve_import(file_path, target_path, known_paths)
         metadata["resolved_path"] = target_path
-        metadata["resolution"] = (
-            "local_file" if target_path in known_paths else "module_specifier"
-        )
+        metadata["resolution"] = "local_file" if target_path in known_paths else "module_specifier"
     elif parsed_edge.relation == "CALLS":
         short_target = target_path.rsplit(".", 1)[-1]
         target_symbol_id = display_symbol_ids.get((file_path, short_target))
@@ -472,9 +474,7 @@ def _resolve_parsed_edge(
                 target_symbol_id = display_symbol_ids.get((imported_file, target_name))
                 if target_symbol_id:
                     metadata["target_file_path"] = imported_file
-        metadata["resolution"] = (
-            "resolved_symbol" if target_symbol_id else "syntactic_target_only"
-        )
+        metadata["resolution"] = "resolved_symbol" if target_symbol_id else "syntactic_target_only"
     elif parsed_edge.relation == "TRIGGERS":
         target_symbol_id = _resolve_local_symbol_id(
             file_path,
@@ -482,9 +482,7 @@ def _resolve_parsed_edge(
             parsed_edge.target,
             symbol_ids,
         )
-        metadata["resolution"] = (
-            "local_symbol" if target_symbol_id else "unresolved_identifier"
-        )
+        metadata["resolution"] = "local_symbol" if target_symbol_id else "unresolved_identifier"
     elif parsed_edge.relation == "REQUESTS":
         metadata_request_path = str(metadata.get("request_path") or "")
         request_path = (
@@ -494,9 +492,7 @@ def _resolve_parsed_edge(
         )
         request_key_path = _route_key_path(request_path) if request_path else None
         http_method = str(metadata.get("http_method", "GET")).upper()
-        source_package_root = _longest_matching_package_root(
-            file_path, next_package_roots
-        )
+        source_package_root = _longest_matching_package_root(file_path, next_package_roots)
         route_handler = None
         if request_key_path:
             if source_package_root is not None:
@@ -588,6 +584,7 @@ def analyze_repository(snapshot_id: str) -> None:
             owner = snapshot.repository.owner
             name = snapshot.repository.name
             requested_branch = snapshot.branch
+            resolved_commit_sha = snapshot.commit_sha
 
         workspace = _safe_workspace(snapshot_id)
         archive_path = workspace / "repository.tar.gz"
@@ -595,7 +592,17 @@ def analyze_repository(snapshot_id: str) -> None:
         source_root.mkdir()
 
         with GitHubClient(settings) as github:
-            resolved = github.resolve_snapshot(owner, name, requested_branch)
+            resolved = (
+                GitHubSnapshot(
+                    owner=owner,
+                    name=name,
+                    branch=requested_branch or "main",
+                    commit_sha=resolved_commit_sha,
+                    canonical_url=f"https://github.com/{owner}/{name}",
+                )
+                if resolved_commit_sha
+                else github.resolve_snapshot(owner, name, requested_branch)
+            )
             github.download_archive(resolved, archive_path)
 
         with SessionLocal() as db:
@@ -610,17 +617,97 @@ def analyze_repository(snapshot_id: str) -> None:
         _extract_archive(archive_path, source_root)
         archive_path.unlink(missing_ok=True)
         source_files = collect_source_files(source_root, settings)
+        current_manifest = build_manifest(source_files)
         _set_stage(snapshot_id, "parsing", total=len(source_files))
 
         analyzer = TypeScriptAnalyzer()
         python_analyzer = PythonAnalyzer()
         parse_results: dict[str, ParseResult] = {}
+        reuse_metrics = {
+            "parse_reused": 0,
+            "parse_created": 0,
+            "chunk_template_reused": 0,
+            "chunk_template_created": 0,
+        }
+        parse_reused_by_path: dict[str, bool] = {}
 
         with SessionLocal() as db:
-            db.execute(
-                delete(NavigationArtifact).where(
-                    NavigationArtifact.snapshot_id == snapshot_id
+            snapshot = db.get(RepositorySnapshot, snapshot_id)
+            if snapshot is None:
+                raise RuntimeError("Snapshot disappeared before manifest diff")
+            previous_manifest: dict[str, ManifestEntry] = {}
+            if snapshot.base_snapshot_id:
+                previous_rows = db.scalars(
+                    select(SnapshotManifest).where(
+                        SnapshotManifest.snapshot_id == snapshot.base_snapshot_id
+                    )
+                ).all()
+                previous_manifest = {
+                    item.path: ManifestEntry(
+                        path=item.path,
+                        content_hash=item.content_hash,
+                        language=item.language,
+                        byte_size=item.byte_size,
+                    )
+                    for item in previous_rows
+                }
+                if not previous_manifest:
+                    previous_files = db.scalars(
+                        select(FileRecord).where(
+                            FileRecord.snapshot_id == snapshot.base_snapshot_id
+                        )
+                    ).all()
+                    previous_manifest = {
+                        item.path: ManifestEntry(
+                            path=item.path,
+                            content_hash=item.content_hash,
+                            language=item.language,
+                            byte_size=item.byte_size,
+                        )
+                        for item in previous_files
+                    }
+            manifest_diff = diff_manifests(previous_manifest, current_manifest)
+            dirty_paths = (
+                dependency_closure(
+                    db,
+                    base_snapshot_id=snapshot.base_snapshot_id,
+                    direct_dirty=manifest_diff.direct_dirty,
+                    all_current_paths=set(current_manifest),
                 )
+                if snapshot.base_snapshot_id and previous_manifest
+                else set(current_manifest)
+            )
+            decision = choose_incremental_mode(
+                diff=manifest_diff,
+                dirty_paths=dirty_paths,
+                current_file_count=len(current_manifest),
+                threshold=settings.incremental_analysis_threshold,
+                base_is_valid=bool(snapshot.base_snapshot_id and previous_manifest),
+            )
+            if snapshot.reuse_mode == "incremental":
+                snapshot.reuse_mode = decision.mode
+            snapshot.manifest_hash = manifest_hash(current_manifest)
+            snapshot.change_summary = {
+                **manifest_diff.summary(),
+                "dependency_closure_files": len(dirty_paths),
+                "impact_ratio": decision.impact_ratio,
+                "fallback_reason": decision.reason,
+            }
+            db.execute(delete(SnapshotManifest).where(SnapshotManifest.snapshot_id == snapshot_id))
+            db.add_all(
+                [
+                    SnapshotManifest(
+                        snapshot_id=snapshot_id,
+                        path=item.path,
+                        content_hash=item.content_hash,
+                        language=item.language,
+                        byte_size=item.byte_size,
+                    )
+                    for item in current_manifest.values()
+                ]
+            )
+            db.execute(
+                delete(NavigationArtifact).where(NavigationArtifact.snapshot_id == snapshot_id)
             )
             db.execute(delete(GuidedPath).where(GuidedPath.snapshot_id == snapshot_id))
             db.execute(delete(CodeChunk).where(CodeChunk.snapshot_id == snapshot_id))
@@ -644,14 +731,39 @@ def analyze_repository(snapshot_id: str) -> None:
                 db.add(record)
                 db.flush()
                 file_records[source_file.path] = record
+                ensure_source_blob(
+                    db,
+                    content_hash=source_file.content_hash,
+                    content=source_file.content,
+                    byte_size=source_file.byte_size,
+                    line_count=source_file.line_count,
+                )
                 if source_file.language in {"typescript", "tsx", "javascript", "jsx"}:
-                    parse_results[source_file.path] = analyzer.parse(
-                        source_file.path, source_file.content, source_file.language
+                    result, reused = load_or_create_parse_artifact(
+                        db,
+                        content_hash=source_file.content_hash,
+                        language=source_file.language,
+                        parser_version=SEMANTIC_GRAPH_VERSION,
+                        parser=lambda item=source_file: analyzer.parse(
+                            item.path, item.content, item.language
+                        ),
                     )
+                    parse_results[source_file.path] = result
+                    parse_reused_by_path[source_file.path] = reused
+                    reuse_metrics["parse_reused" if reused else "parse_created"] += 1
                 elif source_file.language == "python":
-                    parse_results[source_file.path] = python_analyzer.parse(
-                        source_file.path, source_file.content
+                    result, reused = load_or_create_parse_artifact(
+                        db,
+                        content_hash=source_file.content_hash,
+                        language=source_file.language,
+                        parser_version=SEMANTIC_GRAPH_VERSION,
+                        parser=lambda item=source_file: python_analyzer.parse(
+                            item.path, item.content
+                        ),
                     )
+                    parse_results[source_file.path] = result
+                    parse_reused_by_path[source_file.path] = reused
+                    reuse_metrics["parse_reused" if reused else "parse_created"] += 1
                 if index % 50 == 0:
                     job = db.scalar(
                         select(AnalysisJob)
@@ -705,9 +817,7 @@ def analyze_repository(snapshot_id: str) -> None:
             route_handlers = _build_route_handler_index(
                 parse_results, symbol_ids, next_package_roots
             )
-            import_binding_index = _build_import_binding_index(
-                parse_results, known_paths
-            )
+            import_binding_index = _build_import_binding_index(parse_results, known_paths)
             edge_count = 0
             for path, result in parse_results.items():
                 file_record = file_records[path]
@@ -779,6 +889,34 @@ def analyze_repository(snapshot_id: str) -> None:
                     max_lines=settings.chunk_max_lines,
                     overlap_lines=settings.chunk_overlap_lines,
                 )
+                chunker_fingerprint = (
+                    f"{settings.chunker_version}:{settings.chunk_max_lines}:"
+                    f"{settings.chunk_overlap_lines}"
+                )
+                template = db.scalar(
+                    select(ChunkTemplate).where(
+                        ChunkTemplate.content_hash == file_record.content_hash,
+                        ChunkTemplate.chunker_fingerprint == chunker_fingerprint,
+                    )
+                )
+                if template is None:
+                    db.add(
+                        ChunkTemplate(
+                            content_hash=file_record.content_hash,
+                            chunker_fingerprint=chunker_fingerprint,
+                            payload_json=[
+                                {
+                                    key: value
+                                    for key, value in asdict(draft).items()
+                                    if key not in {"symbol_id", "key", "parent_key"}
+                                }
+                                for draft in drafts
+                            ],
+                        )
+                    )
+                    reuse_metrics["chunk_template_created"] += 1
+                else:
+                    reuse_metrics["chunk_template_reused"] += 1
                 chunk_inputs.extend((file_record, draft) for draft in drafts)
                 if job and file_index % 50 == 0:
                     job.progress_current = file_index
@@ -790,9 +928,28 @@ def analyze_repository(snapshot_id: str) -> None:
                 job.progress_current = 0
                 job.progress_total = len(chunk_inputs)
                 db.commit()
-            embeddings = embedder.embed_documents(
-                [draft.embedding_text for _, draft in chunk_inputs]
+            embedding_hashes = {text_hash(draft.embedding_text) for _, draft in chunk_inputs}
+            existing_embedding_hashes = set(
+                db.scalars(
+                    select(EmbeddingCache.text_hash).where(
+                        EmbeddingCache.provider == settings.embedding_provider,
+                        EmbeddingCache.model == embedder.model_name,
+                        EmbeddingCache.dimensions == settings.embedding_dimensions,
+                        EmbeddingCache.prompt_version == settings.embedding_prompt_version,
+                        EmbeddingCache.text_hash.in_(embedding_hashes),
+                    )
+                ).all()
             )
+            embeddings, embedding_metrics = embed_documents_with_cache(
+                db,
+                texts=[draft.embedding_text for _, draft in chunk_inputs],
+                embedder=embedder,
+                provider=settings.embedding_provider,
+                model=embedder.model_name,
+                dimensions=settings.embedding_dimensions,
+                prompt_version=settings.embedding_prompt_version,
+            )
+            reuse_metrics.update(embedding_metrics)
 
             chunk_records: dict[str, CodeChunk] = {}
             parent_keys: dict[str, str | None] = {}
@@ -824,6 +981,51 @@ def analyze_repository(snapshot_id: str) -> None:
                 if parent_key:
                     chunk_records[key].parent_chunk_id = chunk_records[parent_key].id
 
+            base_files_by_path: dict[str, FileRecord] = {}
+            if snapshot.base_snapshot_id:
+                base_files = db.scalars(
+                    select(FileRecord).where(FileRecord.snapshot_id == snapshot.base_snapshot_id)
+                ).all()
+                base_files_by_path = {item.path: item for item in base_files}
+            renamed_from = {
+                new_path: old_path for old_path, new_path in manifest_diff.renamed.items()
+            }
+            db.execute(
+                delete(SnapshotFileLineage).where(SnapshotFileLineage.snapshot_id == snapshot_id)
+            )
+            chunks_by_file: dict[str, list[object]] = defaultdict(list)
+            for file_record, draft in chunk_inputs:
+                chunks_by_file[file_record.path].append(draft)
+            for path, file_record in file_records.items():
+                previous_path = renamed_from.get(path)
+                base_file = base_files_by_path.get(previous_path or path)
+                if previous_path:
+                    change_kind = "renamed"
+                elif path in manifest_diff.unchanged:
+                    change_kind = "unchanged"
+                elif path in manifest_diff.modified:
+                    change_kind = "modified"
+                else:
+                    change_kind = "added"
+                reused_embeddings = sum(
+                    1
+                    for draft in chunks_by_file.get(path, [])
+                    if text_hash(draft.embedding_text) in existing_embedding_hashes
+                )
+                db.add(
+                    SnapshotFileLineage(
+                        snapshot_id=snapshot_id,
+                        file_id=file_record.id,
+                        base_file_id=base_file.id if base_file else None,
+                        path=path,
+                        previous_path=previous_path,
+                        change_kind=change_kind,
+                        reused_parse=parse_reused_by_path.get(path, False),
+                        reused_chunks=change_kind in {"unchanged", "renamed"},
+                        reused_embeddings=reused_embeddings,
+                    )
+                )
+
             if job:
                 job.stage = "guidance"
                 job.progress_current = 0
@@ -841,18 +1043,48 @@ def analyze_repository(snapshot_id: str) -> None:
             )
             if snapshot is None or job is None:
                 raise RuntimeError("Analysis state disappeared before completion")
+            if job.organization_id:
+                feature = (
+                    "repository_analysis_incremental"
+                    if snapshot.reuse_mode == "incremental"
+                    else "repository_analysis_full"
+                )
+                UsageService(settings).settle(
+                    db,
+                    reservation_id=job.cost_reservation_id,
+                    context=UsageContext(
+                        organization_id=job.organization_id,
+                        user_id=job.requested_by_user_id,
+                        feature=feature,
+                        request_id=job.id,
+                        idempotency_key=f"{job.id}:{feature}",
+                    ),
+                    provider="openai"
+                    if settings.embedding_provider in {"auto", "openai"}
+                    else None,
+                    model=embedder.model_name,
+                    usage=getattr(embedder, "usage", {}),
+                )
             snapshot.status = "ready"
+            snapshot.ready_at = _utc_now()
             snapshot.file_count = len(source_files)
             snapshot.symbol_count = len(symbol_ids)
             snapshot.edge_count = edge_count
             snapshot.chunk_count = len(chunk_inputs)
             snapshot.total_bytes = sum(file.byte_size for file in source_files)
             snapshot.parser_version = SEMANTIC_GRAPH_VERSION
-            snapshot.index_version = "retrieval-v1"
+            snapshot.index_version = settings.retrieval_index_schema_version
             snapshot.embedding_model = embedder.model_name
             snapshot.error_message = None
+            snapshot.change_summary = {
+                **(snapshot.change_summary or {}),
+                **reuse_metrics,
+                "chunk_reused": reuse_metrics.get("embedding_reused", 0),
+                "chunk_created": reuse_metrics.get("embedding_created", 0),
+            }
             job.stage = "ready"
             job.status = "finished"
+            job.reuse_metrics = dict(snapshot.change_summary)
             job.progress_current = len(chunk_inputs)
             job.progress_total = len(chunk_inputs)
             job.finished_at = _utc_now()
@@ -870,6 +1102,8 @@ def analyze_repository(snapshot_id: str) -> None:
                 snapshot.status = "failed"
                 snapshot.error_message = detail
             if job:
+                if job.cost_reservation_id:
+                    UsageService(get_settings()).release(db, job.cost_reservation_id)
                 job.status = "failed"
                 job.error_code = type(exc).__name__
                 job.error_detail = detail

@@ -14,6 +14,7 @@ from app.assessment.question_bank import (
     questions_for_stack,
 )
 from app.assessment.scoring import project_profile, score_response
+from app.core.auth import AuthContext, AuthDep
 from app.core.db import get_db
 from app.learning.mastery import apply_mastery_projection
 from app.models import (
@@ -37,21 +38,47 @@ router = APIRouter(tags=["assessment"])
 SessionDep = Annotated[Session, Depends(get_db)]
 
 
+def _create_learner_profile(
+    payload: LearnerProfileCreate,
+    db: Session,
+    auth: AuthContext | None,
+) -> LearnerProfile:
+    profile = db.scalar(
+        select(LearnerProfile).where(LearnerProfile.anonymous_key == payload.anonymous_key)
+    )
+    if profile is not None and auth is not None and auth.authenticated:
+        if profile.user_id not in {None, auth.user_id}:
+            raise HTTPException(status_code=409, detail={"code": "anonymous_profile_claimed"})
+        if profile.organization_id not in {None, auth.organization_id}:
+            raise HTTPException(status_code=409, detail={"code": "anonymous_profile_claimed"})
+        profile.user_id = auth.user_id
+        profile.organization_id = auth.organization_id
+        db.commit()
+        db.refresh(profile)
+    elif profile is None:
+        profile = LearnerProfile(
+            anonymous_key=payload.anonymous_key,
+            user_id=auth.user_id if auth and auth.authenticated else None,
+            organization_id=auth.organization_id if auth and auth.authenticated else None,
+        )
+        db.add(profile)
+        db.commit()
+        db.refresh(profile)
+    return profile
+
+
+def create_learner_profile(payload: LearnerProfileCreate, db: SessionDep):
+    """Legacy internal helper; HTTP callers use the authenticated endpoint below."""
+    return _create_learner_profile(payload, db, None)
+
+
 @router.post(
     "/learner-profiles",
     response_model=LearnerProfileResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def create_learner_profile(payload: LearnerProfileCreate, db: SessionDep):
-    profile = db.scalar(
-        select(LearnerProfile).where(LearnerProfile.anonymous_key == payload.anonymous_key)
-    )
-    if profile is None:
-        profile = LearnerProfile(anonymous_key=payload.anonymous_key)
-        db.add(profile)
-        db.commit()
-        db.refresh(profile)
-    return profile
+def create_learner_profile_endpoint(payload: LearnerProfileCreate, db: SessionDep, auth: AuthDep):
+    return _create_learner_profile(payload, db, auth)
 
 
 @router.get("/learner-profiles/{profile_id}", response_model=LearnerProfileResponse)

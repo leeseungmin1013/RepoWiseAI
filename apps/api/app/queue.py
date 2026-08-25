@@ -15,13 +15,19 @@ def get_analysis_queue() -> Queue:
 
 def enqueue_repository_analysis(snapshot_id: str) -> str:
     settings = get_settings()
-    job = get_analysis_queue().enqueue(
-        "app.workers.repository_analysis.analyze_repository",
-        snapshot_id,
-        job_timeout=settings.analysis_job_timeout_seconds,
-        result_ttl=3600,
-        failure_ttl=24 * 3600,
-    )
+    job_id = f"repository-analysis-{snapshot_id}"
+    try:
+        job = get_analysis_queue().enqueue(
+            "app.workers.repository_analysis.analyze_repository",
+            snapshot_id,
+            job_id=job_id,
+            unique=True,
+            job_timeout=settings.analysis_job_timeout_seconds,
+            result_ttl=3600,
+            failure_ttl=24 * 3600,
+        )
+    except DuplicateJobError:
+        return job_id
     return job.id
 
 

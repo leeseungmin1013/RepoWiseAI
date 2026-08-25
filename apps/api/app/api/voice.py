@@ -9,7 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.core.db import get_db
-from app.models import ChatSession, LearningSession
+from app.models import ChatSession, LearnerProfile, LearningSession
+from app.services.usage import UsageContext, UsageService
 from app.voice.realtime import OpenAIRealtimeClient, RealtimeUnavailable
 
 router = APIRouter(tags=["voice-learning"])
@@ -65,6 +66,24 @@ async def create_voice_offer(
     if "v=0" not in sdp_offer[:100]:
         raise HTTPException(status_code=422, detail="Invalid SDP offer")
 
+    usage_context = None
+    reservation = None
+    if settings.quota_enforcement_mode != "off":
+        profile = db.get(LearnerProfile, learning_session.learner_profile_id)
+        if profile is not None and profile.organization_id:
+            usage_context = UsageContext(
+                organization_id=profile.organization_id,
+                user_id=profile.user_id,
+                feature="realtime_voice",
+                request_id=f"voice:{session_id}",
+                idempotency_key=f"voice:{session_id}:{hashlib.sha256(raw_offer).hexdigest()}",
+            )
+            reservation = UsageService(settings).reserve(
+                db,
+                context=usage_context,
+                estimated_cost_micro_usd=settings.realtime_reservation_micro_usd,
+            )
+
     safety_identifier = hashlib.sha256(
         f"repowise:{learning_session.learner_profile_id}".encode()
     ).hexdigest()
@@ -74,9 +93,25 @@ async def create_voice_offer(
             safety_identifier=safety_identifier,
         )
     except RealtimeUnavailable as exc:
+        if reservation is not None:
+            UsageService(settings).release(db, reservation.id)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    headers = {"Cache-Control": "no-store"}
+    if usage_context is not None:
+        UsageService(settings).settle(
+            db,
+            reservation_id=reservation.id if reservation else None,
+            context=usage_context,
+            provider="openai",
+            model=settings.realtime_model,
+            usage={"session_created": 1},
+            settled_cost_micro_usd=settings.realtime_reservation_micro_usd,
+        )
+
+    headers = {
+        "Cache-Control": "no-store",
+        "X-Realtime-Max-Duration": str(settings.realtime_max_duration_seconds),
+    }
     if answer.location:
         headers["Location"] = answer.location
     if answer.call_id:

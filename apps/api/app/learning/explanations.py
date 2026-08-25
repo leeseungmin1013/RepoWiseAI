@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import tree_sitter_typescript
@@ -10,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 from tree_sitter import Language, Node, Parser
 
+from app.ai.gateway import MeteredOpenAIClient
 from app.core.config import Settings
 from app.models import CodeChunk, ExplanationArtifact, FileRecord, LearningStep
 from app.retrieval.hybrid import evidence_id_for_chunk
@@ -67,6 +69,7 @@ def get_or_create_line_explanation(
     step_id: str,
     depth_band: str,
     settings: Settings,
+    recorder: Callable[..., None] | None = None,
 ) -> tuple[ExplanationArtifact, LearningStep, FileRecord, str]:
     step = db.scalar(
         select(LearningStep)
@@ -92,7 +95,9 @@ def get_or_create_line_explanation(
         return existing, step, file, mode
 
     drafts = segment_source(chunk)
-    segments, mode, model_metadata = _teach_segments(drafts, chunk, depth_band, settings)
+    segments, mode, model_metadata = _teach_segments(
+        drafts, chunk, depth_band, settings, recorder=recorder
+    )
     artifact = ExplanationArtifact(
         snapshot_id=chunk.snapshot_id,
         chunk_id=chunk.id,
@@ -168,6 +173,7 @@ def _teach_segments(
     chunk: CodeChunk,
     depth_band: str,
     settings: Settings,
+    recorder: Callable[..., None] | None = None,
 ) -> tuple[list[dict], str, dict]:
     deterministic = [_fallback_teaching(item, chunk) for item in drafts]
     uses_openai = bool(settings.openai_api_key) and settings.generation_provider in {
@@ -177,8 +183,6 @@ def _teach_segments(
     if not uses_openai:
         return deterministic, "deterministic", {"mode": "deterministic"}
     try:
-        from openai import OpenAI
-
         payload = [
             {
                 "segment_id": item.segment_id,
@@ -187,8 +191,8 @@ def _teach_segments(
             }
             for item in drafts
         ]
-        client = OpenAI(api_key=settings.openai_api_key)
-        response = client.responses.parse(
+        client = MeteredOpenAIClient(settings.openai_api_key, recorder=recorder)
+        response = client.responses_parse(
             model=settings.generation_model,
             input=[
                 {

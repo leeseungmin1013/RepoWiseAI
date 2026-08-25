@@ -7,10 +7,18 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session, load_only, selectinload
 
+from app.ai.gateway import extract_usage
 from app.analysis.tree import build_file_tree
+from app.core.auth import AuthDep
 from app.core.config import get_settings
 from app.core.db import get_db
-from app.models import AnalysisJob, FileRecord, Repository, RepositorySnapshot, Symbol, SymbolEdge
+from app.models import (
+    FileRecord,
+    OrganizationRepository,
+    RepositorySnapshot,
+    Symbol,
+    SymbolEdge,
+)
 from app.navigation.architecture_diff import (
     architecture_graph_to_mermaid,
     diff_architecture_graphs,
@@ -55,12 +63,15 @@ from app.schemas import (
     RepositoryCreateResponse,
     RepositoryStoryResponse,
     RepositorySummary,
+    ReuseSummary,
     SnapshotResponse,
     StartHereResponse,
     SymbolResponse,
     TreeNode,
 )
-from app.services.github import parse_github_url
+from app.services.github import GitHubError, parse_github_url
+from app.services.snapshot_resolver import resolve_snapshot_request
+from app.services.usage import UsageContext, UsageService
 
 router = APIRouter(tags=["repositories"])
 settings = get_settings()
@@ -101,57 +112,90 @@ def require_ready(snapshot: RepositorySnapshot) -> None:
     response_model=RepositoryCreateResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
-def create_repository(payload: RepositoryCreate, db: SessionDep):
+def create_repository(
+    payload: RepositoryCreate,
+    db: SessionDep,
+    auth: AuthDep,
+    http_response: Response,
+):
     try:
         owner, name, canonical_url = parse_github_url(str(payload.url))
+        resolution = resolve_snapshot_request(
+            db,
+            settings=settings,
+            context=auth,
+            owner=owner,
+            name=name,
+            canonical_url=canonical_url,
+            requested_branch=payload.branch,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except GitHubError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    repository = db.scalar(
-        select(Repository).where(
-            Repository.provider == "github", Repository.owner == owner, Repository.name == name
+    analysis_job = resolution.job
+    reservation = None
+    if resolution.should_enqueue and auth.authenticated and analysis_job is not None:
+        feature = (
+            "repository_analysis_incremental"
+            if resolution.mode == "incremental"
+            else "repository_analysis_full"
         )
-    )
-    if repository is None:
-        repository = Repository(owner=owner, name=name, url=canonical_url)
-        db.add(repository)
-        db.flush()
+        reservation = UsageService(settings).reserve(
+            db,
+            context=UsageContext(
+                organization_id=auth.organization_id,
+                user_id=auth.user_id,
+                feature=feature,
+                request_id=analysis_job.id,
+                idempotency_key=f"{analysis_job.id}:{feature}",
+            ),
+            estimated_cost_micro_usd=settings.repository_analysis_reservation_micro_usd,
+        )
+        if reservation is not None:
+            analysis_job.cost_reservation_id = reservation.id
+            db.commit()
+    if resolution.should_enqueue:
+        if analysis_job is None:
+            raise HTTPException(status_code=500, detail="Analysis job was not created")
+        try:
+            enqueue_repository_analysis(resolution.snapshot.id)
+        except Exception as exc:
+            if reservation is not None:
+                UsageService(settings).release(db, reservation.id)
+            resolution.snapshot.status = "failed"
+            resolution.snapshot.error_message = "Analysis queue is unavailable"
+            analysis_job.status = "failed"
+            analysis_job.error_code = "queue_unavailable"
+            analysis_job.error_detail = str(exc)
+            db.commit()
+            raise HTTPException(status_code=503, detail="Analysis queue is unavailable") from exc
 
-    snapshot = RepositorySnapshot(repository_id=repository.id, branch=payload.branch)
-    db.add(snapshot)
-    db.flush()
-    analysis_job = AnalysisJob(snapshot_id=snapshot.id)
-    db.add(analysis_job)
-    db.commit()
-    db.refresh(repository)
-    db.refresh(snapshot)
-    db.refresh(analysis_job)
-
-    try:
-        enqueue_repository_analysis(snapshot.id)
-    except Exception as exc:
-        snapshot.status = "failed"
-        snapshot.error_message = "Analysis queue is unavailable"
-        analysis_job.status = "failed"
-        analysis_job.error_code = "queue_unavailable"
-        analysis_job.error_detail = str(exc)
-        db.commit()
-        raise HTTPException(status_code=503, detail="Analysis queue is unavailable") from exc
-
-    snapshot.jobs = [analysis_job]
+    resolution.snapshot.jobs = [analysis_job] if analysis_job else []
+    http_response.headers["X-Analysis-Reuse"] = resolution.mode
     return RepositoryCreateResponse(
-        repository=RepositorySummary.model_validate(repository),
-        snapshot=to_snapshot_response(snapshot),
+        repository=RepositorySummary.model_validate(resolution.repository),
+        snapshot=to_snapshot_response(resolution.snapshot),
+        reuse=ReuseSummary(
+            mode=resolution.mode,
+            cache_hit=resolution.cache_hit,
+            base_snapshot_id=resolution.base_snapshot_id,
+            reason=resolution.reason,
+        ),
     )
 
 
 @router.get("/snapshots", response_model=list[SnapshotResponse])
-def list_snapshots(db: SessionDep, limit: SnapshotLimit = 10):
+def list_snapshots(db: SessionDep, auth: AuthDep, limit: SnapshotLimit = 10):
+    statement = select(RepositorySnapshot).options(selectinload(RepositorySnapshot.jobs))
+    if auth.authenticated:
+        statement = statement.join(
+            OrganizationRepository,
+            OrganizationRepository.repository_id == RepositorySnapshot.repository_id,
+        ).where(OrganizationRepository.organization_id == auth.organization_id)
     snapshots = db.scalars(
-        select(RepositorySnapshot)
-        .options(selectinload(RepositorySnapshot.jobs))
-        .order_by(RepositorySnapshot.created_at.desc())
-        .limit(limit)
+        statement.order_by(RepositorySnapshot.created_at.desc()).limit(limit)
     ).all()
     return [to_snapshot_response(snapshot) for snapshot in snapshots]
 
@@ -426,6 +470,7 @@ def enhance_architecture_graph(
     snapshot_id: str,
     response: Response,
     db: SessionDep,
+    auth: AuthDep,
 ):
     if not settings.navigation_llm_labels_enabled:
         raise HTTPException(
@@ -449,13 +494,51 @@ def enhance_architecture_graph(
         response.headers["X-Navigation-Artifact-Version"] = ARCHITECTURE_LABEL_VERSION
         return cached
     graph = get_architecture_graph(snapshot_id, Response(), db)
+    usage: dict[str, int] = {}
+
+    def record(provider_response, *, embedding: bool = False) -> None:
+        measured = extract_usage(provider_response, embedding=embedding).as_dict()
+        for key, value in measured.items():
+            usage[key] = usage.get(key, 0) + value
+
+    usage_context = (
+        UsageContext(
+            organization_id=auth.organization_id,
+            user_id=auth.user_id,
+            feature="architecture_label_generation",
+            request_id=f"architecture-label:{snapshot_id}",
+            idempotency_key=f"architecture-label:{snapshot_id}:{ARCHITECTURE_LABEL_VERSION}",
+        )
+        if auth.authenticated
+        else None
+    )
+    reservation = (
+        UsageService(settings).reserve(
+            db,
+            context=usage_context,
+            estimated_cost_micro_usd=settings.chat_generation_reservation_micro_usd,
+        )
+        if usage_context
+        else None
+    )
     try:
-        enhanced = enhance_architecture_graph_labels(graph, settings)
+        enhanced = enhance_architecture_graph_labels(graph, settings, recorder=record)
     except Exception as exc:
+        if reservation is not None:
+            UsageService(settings).release(db, reservation.id)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Architecture label enhancement is unavailable",
         ) from exc
+    if usage_context:
+        UsageService(settings).settle(
+            db,
+            reservation_id=reservation.id if reservation else None,
+            context=usage_context,
+            provider="openai",
+            model=settings.generation_model,
+            usage=usage,
+        )
     stored = write_navigation_artifacts(
         db,
         snapshot_id=snapshot_id,

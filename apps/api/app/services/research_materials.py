@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Literal
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
 
+from app.ai.gateway import MeteredOpenAIClient
 from app.core.config import Settings
 from app.schemas import ResearchMaterialsResponse, ResearchSourceResponse
 
@@ -76,18 +78,17 @@ def research_official_materials(
     *,
     settings: Settings,
     preferred_style: str,
+    recorder: Callable[..., None] | None = None,
 ) -> ResearchMaterialsResponse:
     if not settings.openai_api_key:
         raise RuntimeError("OpenAI API key is required for verified material research")
-
-    from openai import OpenAI
 
     allowed_domains = set(settings.research_allowed_domain_list)
     if not allowed_domains:
         raise RuntimeError("No official research domains are configured")
 
-    client = OpenAI(api_key=settings.openai_api_key)
-    response = client.responses.parse(
+    client = MeteredOpenAIClient(settings.openai_api_key, recorder=recorder)
+    response = client.responses_parse(
         model=settings.research_model,
         reasoning={"effort": settings.research_reasoning_effort},
         background=False,

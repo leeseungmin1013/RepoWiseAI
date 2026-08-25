@@ -4,12 +4,14 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
+from app.ai.gateway import extract_usage
 from app.core.config import Settings, get_settings
 from app.core.db import SessionLocal
 from app.models import DeepTask
 from app.navigation.change_brief import generate_change_brief
 from app.services.grounded_chat import GroundedGenerationCancelled, create_grounded_message
 from app.services.research_materials import research_official_materials
+from app.services.usage import UsageContext, UsageService
 
 
 def _utc_now() -> datetime:
@@ -74,13 +76,22 @@ def run_deep_task(task_id: str) -> None:
                 }
                 task.finished_at = _utc_now()
                 db.commit()
+                UsageService(settings).release(db, getattr(task, "cost_reservation_id", None))
                 return
 
             if task.kind == "research_materials":
+                usage: dict[str, int] = {}
+
+                def record(response, *, embedding: bool = False) -> None:
+                    measured = extract_usage(response, embedding=embedding).as_dict()
+                    for key, value in measured.items():
+                        usage[key] = usage.get(key, 0) + value
+
                 research = research_official_materials(
                     task.prompt,
                     settings=settings,
                     preferred_style=task.teaching_style,
+                    recorder=record,
                 )
                 db.refresh(task)
                 if task.status == "cancelled":
@@ -97,6 +108,21 @@ def run_deep_task(task_id: str) -> None:
                 }
                 task.finished_at = _utc_now()
                 db.commit()
+                if getattr(task, "organization_id", None):
+                    UsageService(settings).settle(
+                        db,
+                        reservation_id=getattr(task, "cost_reservation_id", None),
+                        context=UsageContext(
+                            organization_id=getattr(task, "organization_id", None),
+                            user_id=getattr(task, "user_id", None),
+                            feature="research_web_search",
+                            request_id=task.id,
+                            idempotency_key=f"deep-task:{task.id}",
+                        ),
+                        provider="openai",
+                        model=settings.research_model,
+                        usage=usage,
+                    )
                 return
 
             response = create_grounded_message(
@@ -109,6 +135,7 @@ def run_deep_task(task_id: str) -> None:
                 reasoning_effort=reasoning_effort,
                 allow_retrieval_fallback=False,
                 task_kind=task.kind,
+                cost_reservation_id=getattr(task, "cost_reservation_id", None),
                 metadata_overrides={
                     **task.model_metadata,
                     "deep_task_id": task.id,
@@ -140,6 +167,7 @@ def run_deep_task(task_id: str) -> None:
                 task.error_detail = "심층 모델 응답을 생성하지 못했습니다."
                 task.finished_at = _utc_now()
                 db.commit()
+                UsageService().release(db, getattr(task, "cost_reservation_id", None))
         if isinstance(exc, GroundedGenerationCancelled):
             return
         raise

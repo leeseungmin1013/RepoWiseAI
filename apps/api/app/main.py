@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
@@ -28,9 +29,24 @@ app.add_middleware(
         "X-Navigation-Artifact-Version",
         "X-Navigation-Cache",
         "X-Navigation-Cache-Write",
+        "X-Request-Id",
+        "X-Analysis-Reuse",
+        "X-Retrieval-Cache",
+        "X-Generation-Cache",
+        "X-Quota-Remaining",
+        "X-Realtime-Max-Duration",
     ],
 )
 app.include_router(api_router, prefix=settings.api_prefix)
+
+
+@app.middleware("http")
+async def request_context(request: Request, call_next):
+    request_id = request.headers.get("X-Request-Id") or str(uuid4())
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers["X-Request-Id"] = request_id
+    return response
 
 
 @app.get("/", include_in_schema=False)

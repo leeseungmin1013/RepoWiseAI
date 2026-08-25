@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from pydantic import BaseModel
 
+from app.ai.gateway import MeteredOpenAIClient, extract_usage
 from app.core.config import Settings
 from app.retrieval.evidence import ResolvedEvidence
 
@@ -45,6 +46,7 @@ class GeneratedAnswer:
     mode: str
     model_name: str | None
     voice_summary: str | None = None
+    usage: dict[str, int] = field(default_factory=dict)
 
 
 class OpenAIAnswerPayload(BaseModel):
@@ -116,8 +118,6 @@ class GroundedAnswerGenerator:
         reasoning_effort: str | None = None,
         task_kind: str | None = None,
     ) -> GeneratedAnswer:
-        from openai import OpenAI
-
         allowed_ids = {item.evidence_id for item in evidence}
         evidence_payload = [
             {
@@ -151,7 +151,11 @@ Question:
 Evidence:
 {json.dumps(evidence_payload, ensure_ascii=False)}
 """
-        client = OpenAI(api_key=self.settings.openai_api_key)
+        captured_usage: dict[str, int] = {}
+        client = MeteredOpenAIClient(
+            self.settings.openai_api_key,
+            recorder=lambda response, **_: captured_usage.update(extract_usage(response).as_dict()),
+        )
         selected_model = model_name or self.settings.generation_model
         request = {
             "model": selected_model,
@@ -165,7 +169,7 @@ Evidence:
             request["reasoning"] = {"effort": reasoning_effort}
             request["background"] = False
             request["store"] = False
-        response = client.responses.parse(**request)
+        response = client.responses_parse(**request)
         payload = response.output_parsed
         if payload is None:
             raise ValueError("OpenAI did not return a structured grounded answer")
@@ -186,6 +190,7 @@ Evidence:
                 if payload.voice_summary and payload.voice_summary.strip()
                 else None
             ),
+            usage=captured_usage,
         )
 
     @staticmethod

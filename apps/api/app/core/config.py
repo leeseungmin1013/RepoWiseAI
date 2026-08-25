@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     realtime_connect_timeout_seconds: float = 10.0
     realtime_request_timeout_seconds: float = 30.0
     realtime_max_sdp_bytes: int = 64 * 1024
+    realtime_max_duration_seconds: int = 300
     deep_model: str = "gpt-5.6-terra"
     deep_reasoning_effort: str = "medium"
     deep_escalation_model: str = "gpt-5.6-sol"
@@ -57,6 +58,36 @@ class Settings(BaseSettings):
     analysis_job_timeout_seconds: int = 600
     navigation_architecture_graph_enabled: bool = True
     navigation_llm_labels_enabled: bool = False
+    auth_required: bool = False
+    supabase_url: str | None = None
+    supabase_jwt_issuer: str | None = None
+    supabase_jwt_audience: str = "authenticated"
+    supabase_jwks_url: str | None = None
+    supabase_jwks_ttl_seconds: int = 600
+    default_organization_id: str | None = None
+    exact_snapshot_reuse_enabled: bool = True
+    incremental_analysis_enabled: bool = True
+    incremental_analysis_threshold: float = 0.30
+    semantic_cache_read_enabled: bool = True
+    semantic_cache_write_enabled: bool = True
+    semantic_cache_shadow_mode: bool = False
+    retrieval_cache_similarity_threshold: float = 0.92
+    generation_cache_similarity_threshold: float = 0.96
+    retrieval_cache_ttl_days: int = 90
+    generation_cache_ttl_days: int = 30
+    quota_enforcement_mode: str = "off"
+    default_monthly_allowance_micro_usd: int = 250_000
+    usage_reservation_ttl_seconds: int = 900
+    chat_generation_reservation_micro_usd: int = 100_000
+    repository_analysis_reservation_micro_usd: int = 1_000_000
+    deep_task_reservation_micro_usd: int = 500_000
+    realtime_reservation_micro_usd: int = 250_000
+    analysis_fingerprint_version: str = "analysis-v1"
+    file_filter_version: str = "source-filter-v1"
+    chunker_version: str = "chunker-v1"
+    embedding_prompt_version: str = "embedding-prompt-v1"
+    retrieval_index_schema_version: str = "retrieval-v1"
+    navigation_artifact_bundle_version: str = "navigation-v1"
 
     model_config = SettingsConfigDict(
         env_file=(REPOSITORY_ROOT / ".env", REPOSITORY_ROOT / "apps" / "api" / ".env"),
@@ -75,6 +106,21 @@ class Settings(BaseSettings):
             for domain in self.research_allowed_domains.split(",")
             if domain.strip()
         ]
+
+    @property
+    def resolved_supabase_issuer(self) -> str | None:
+        if self.supabase_jwt_issuer:
+            return self.supabase_jwt_issuer.rstrip("/")
+        if self.supabase_url:
+            return f"{self.supabase_url.rstrip('/')}/auth/v1"
+        return None
+
+    @property
+    def resolved_supabase_jwks_url(self) -> str | None:
+        if self.supabase_jwks_url:
+            return self.supabase_jwks_url
+        issuer = self.resolved_supabase_issuer
+        return f"{issuer}/.well-known/jwks.json" if issuer else None
 
 
 @lru_cache

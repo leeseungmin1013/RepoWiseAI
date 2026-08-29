@@ -52,7 +52,7 @@ def test_manifest_diff_detects_add_modify_delete_and_rename_deterministically() 
 
 @pytest.mark.parametrize(
     ("dirty_count", "expected"),
-    [(29, "incremental"), (31, "full")],
+    [(29, "incremental"), (30, "incremental"), (31, "full")],
 )
 def test_incremental_threshold_boundary(dirty_count: int, expected: str) -> None:
     unchanged = {f"file-{index}.py" for index in range(100)}

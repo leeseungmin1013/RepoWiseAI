@@ -177,6 +177,130 @@ def test_create_grounded_message_persists_the_existing_response_contract(
     assert db.commits == 1
 
 
+def test_semantic_cache_shadow_records_candidates_without_replacing_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = SimpleNamespace(
+        id="snap_1", status="ready", chunk_count=3, index_version="structure-v1"
+    )
+    session = SimpleNamespace(
+        id="ses_1",
+        snapshot=snapshot,
+        learning_session_id=None,
+        current_selection={},
+        preferred_style="beginner",
+        teaching_state={},
+        organization_id="org_1",
+        user_id="user_1",
+    )
+    db = FakeSession([session])
+    evidence = [_evidence("ev_live")]
+    live_hit = SimpleNamespace(evidence_id="ev_live")
+
+    cached_retrieval = SimpleNamespace(
+        status="exact_hit",
+        similarity=1.0,
+        entry=SimpleNamespace(source_run_id="run_cached"),
+        hits=["cached_hit"],
+    )
+    cached_generation = SimpleNamespace(
+        status="semantic_hit",
+        similarity=0.99,
+    )
+
+    class FakeCacheService:
+        def __init__(self, _settings) -> None:
+            self.lookups = 0
+
+        def context_fingerprint(self, *_args, **_kwargs) -> str:
+            return "context"
+
+        def lookup(self, _db, *, kind, **_kwargs):
+            self.lookups += 1
+            return cached_retrieval if kind == "retrieval" else cached_generation
+
+        def store(self, *_args, **_kwargs) -> None:
+            pass
+
+    class FakeRetriever:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def retrieve(self, _db, **_kwargs):
+            return SimpleNamespace(
+                hits=[live_hit],
+                analysis=SimpleNamespace(intent="code_explanation"),
+                run=SimpleNamespace(id="run_live", cache_status=None, cache_similarity=None),
+                query_embedding=[0.1],
+            )
+
+    class FakeRegistry:
+        def resolve(self, _db, hits):
+            assert hits == [live_hit]
+            return evidence
+
+    class FakeGenerator:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def generate(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                answer="실시간 생성 답변",
+                status="answered",
+                mode="openai",
+                model_name="test-model",
+                evidence_ids=["ev_live"],
+                follow_up=None,
+                voice_summary=None,
+                usage={},
+            )
+
+    class FakeUsageService:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def reserve(self, *_args, **_kwargs):
+            return SimpleNamespace(id="reserve_1")
+
+        def settle(self, *_args, **_kwargs) -> None:
+            pass
+
+        def current_snapshot(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                period_end=datetime(2026, 8, 31, tzinfo=UTC),
+                remaining_micro_usd=200_000,
+                reserved_micro_usd=0,
+            )
+
+    settings = SimpleNamespace(
+        semantic_cache_shadow_mode=True,
+        generation_model="test-model",
+        chat_generation_reservation_micro_usd=100_000,
+    )
+    monkeypatch.setattr(grounded_chat, "get_settings", lambda: settings)
+    monkeypatch.setattr(grounded_chat, "SemanticCacheService", FakeCacheService)
+    monkeypatch.setattr(grounded_chat, "HybridRetriever", FakeRetriever)
+    monkeypatch.setattr(grounded_chat, "EvidenceRegistry", FakeRegistry)
+    monkeypatch.setattr(grounded_chat, "GroundedAnswerGenerator", FakeGenerator)
+    monkeypatch.setattr(grounded_chat, "UsageService", FakeUsageService)
+
+    response = grounded_chat.create_grounded_message(
+        db,
+        session_id="ses_1",
+        content="로그인 함수를 설명해줘",
+    )
+
+    assert response.answer == "실시간 생성 답변"
+    assert response.retrieval_run_id == "run_live"
+    assert response.cache is not None
+    assert response.cache.retrieval == "miss"
+    assert response.cache.generation == "miss"
+    assert db.added[1].model_metadata["shadow_cache"] == {
+        "retrieval": "exact_hit",
+        "generation": "semantic_hit",
+    }
+
+
 def test_rest_create_message_delegates_to_grounded_chat_service(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

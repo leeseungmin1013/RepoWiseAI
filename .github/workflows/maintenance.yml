@@ -1,4 +1,4 @@
-name: Production maintenance
+name: Staging maintenance
 
 on:
   schedule:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: production-maintenance
+  group: staging-maintenance
   cancel-in-progress: false
 
 permissions:
@@ -15,10 +15,10 @@ permissions:
 jobs:
   maintenance:
     runs-on: ubuntu-latest
-    environment: production
+    environment: staging
     timeout-minutes: 10
     env:
-      APP_ENV: production
+      APP_ENV: staging
       SERVICE_NAME: repowise-maintenance
       DATABASE_URL: ${{ secrets.MAINTENANCE_DATABASE_URL }}
       QUOTA_ENFORCEMENT_MODE: "off"

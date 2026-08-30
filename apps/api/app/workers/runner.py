@@ -27,6 +27,7 @@ def main() -> None:
     worker = worker_class(
         [deep_queue, analysis_queue],
         connection=connection,
+        worker_ttl=settings.worker_heartbeat_stale_seconds,
         exception_handlers=[handle_job_failure],
         work_horse_killed_handler=handle_work_horse_killed,
     )

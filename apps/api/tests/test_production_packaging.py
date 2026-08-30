@@ -149,6 +149,7 @@ def test_worker_subscribes_deep_queue_before_analysis(monkeypatch):
 
     assert captured["handlers"]["exception_handlers"]
     assert captured["handlers"]["work_horse_killed_handler"]
+    assert captured["handlers"]["worker_ttl"] == Settings().worker_heartbeat_stale_seconds
     assert captured["queues"] == ["repowise-deep-learning", "repowise-analysis"]
     assert captured["work"] == {"with_scheduler": False}
 

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.auth import AuthContext
 from app.core.config import Settings
+from app.core.logging import current_trace_id
 from app.models import (
     AnalysisJob,
     OrganizationRepository,
@@ -190,6 +191,8 @@ def resolve_snapshot_request(
         requested_by_user_id=context.user_id if context.authenticated else None,
         organization_id=context.organization_id if context.authenticated else None,
         base_snapshot_id=base.id if base else None,
+        trace_id=current_trace_id(),
+        last_progress_at=now,
     )
     db.add(job)
     try:

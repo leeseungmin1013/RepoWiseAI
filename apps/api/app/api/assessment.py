@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -15,6 +16,7 @@ from app.assessment.question_bank import (
 )
 from app.assessment.scoring import project_profile, score_response
 from app.core.auth import AuthContext, AuthDep
+from app.core.config import get_settings
 from app.core.db import get_db
 from app.learning.mastery import apply_mastery_projection
 from app.models import (
@@ -119,6 +121,7 @@ def create_assessment_session(snapshot_id: str, payload: AssessmentSessionCreate
             detected_stack=stack,
             questions=[item.stored_payload() for item in questions_for_stack(stack)],
             assessment_version=ASSESSMENT_VERSION,
+            expires_at=utc_now() + timedelta(seconds=get_settings().assessment_timeout_seconds),
         )
         db.add(assessment)
         db.commit()
@@ -126,7 +129,7 @@ def create_assessment_session(snapshot_id: str, payload: AssessmentSessionCreate
         assessment.responses = []
     elif _refresh_assessment(db, assessment):
         db.commit()
-    return _assessment_response(assessment, profile)
+    return _assessment_response(assessment, assessment.profile)
 
 
 @router.get("/assessment-sessions/{assessment_id}", response_model=AssessmentSessionResponse)
@@ -143,9 +146,16 @@ def get_assessment_session(assessment_id: str, db: SessionDep):
 )
 def answer_assessment(assessment_id: str, payload: AssessmentAnswerCreate, db: SessionDep):
     assessment = _load_assessment(db, assessment_id)
+    changed = _refresh_assessment(db, assessment)
     if assessment.status != "active":
-        raise HTTPException(status_code=409, detail="Assessment is already finished")
-    _refresh_assessment(db, assessment)
+        if changed:
+            db.commit()
+        detail = (
+            {"code": "assessment_timed_out", "message": "Assessment time expired"}
+            if assessment.status == "timed_out"
+            else "Assessment is already finished"
+        )
+        raise HTTPException(status_code=409, detail=detail)
     question = question_by_id(assessment.questions, payload.item_id)
     if question is None:
         raise HTTPException(status_code=422, detail="Assessment item not found")
@@ -182,37 +192,18 @@ def answer_assessment(assessment_id: str, payload: AssessmentAnswerCreate, db: S
 )
 def submit_assessment(assessment_id: str, db: SessionDep):
     assessment = _load_assessment(db, assessment_id)
-    if assessment.status == "completed":
+    if _expire_assessment(db, assessment):
+        db.commit()
+        return _assessment_response(assessment, assessment.profile)
+    if assessment.status in {"completed", "timed_out"}:
         return _assessment_response(assessment, assessment.profile)
     if assessment.status == "skipped":
         raise HTTPException(status_code=409, detail="Skipped assessment cannot be submitted")
-    answers = {item.item_id: item.answer for item in assessment.responses}
-    projection = project_profile(
-        questions=assessment.questions,
-        answers=answers,
-        previous_mastery=assessment.profile.concept_mastery,
-    )
-    profile = assessment.profile
-    profile.goal = projection["goal"]
-    profile.preferred_explanation = projection["preferred_explanation"]
-    profile.pace = projection["pace"]
-    apply_mastery_projection(
-        db,
-        profile=profile,
-        projected_mastery=projection["concept_mastery"],
-        event_type="assessment_result",
-        source_type="assessment",
-        source_id=assessment.id,
-        evidence={
-            "assessment_version": ASSESSMENT_VERSION,
-            "answered_item_ids": sorted(answers),
-        },
-    )
-    profile.assessment_version = ASSESSMENT_VERSION
+    _project_assessment_profile(db, assessment, event_type="assessment_result")
     assessment.status = "completed"
     assessment.submitted_at = utc_now()
     db.commit()
-    return _assessment_response(assessment, profile)
+    return _assessment_response(assessment, assessment.profile)
 
 
 @router.post(
@@ -221,7 +212,7 @@ def submit_assessment(assessment_id: str, db: SessionDep):
 )
 def skip_assessment(assessment_id: str, db: SessionDep):
     assessment = _load_assessment(db, assessment_id)
-    if assessment.status == "completed":
+    if assessment.status in {"completed", "timed_out"}:
         return _assessment_response(assessment, assessment.profile)
     assessment.status = "skipped"
     assessment.skipped_at = utc_now()
@@ -229,7 +220,7 @@ def skip_assessment(assessment_id: str, db: SessionDep):
     if not profile.preferred_explanation:
         profile.preferred_explanation = ["line_by_line"]
     db.commit()
-    return _assessment_response(assessment, profile)
+    return _assessment_response(assessment, assessment.profile)
 
 
 def _load_assessment(db: Session, assessment_id: str) -> AssessmentSession:
@@ -268,8 +259,10 @@ def _assessment_response(
         answered_count=len(answers),
         total_count=len(questions),
         created_at=assessment.created_at,
+        expires_at=assessment.expires_at,
         submitted_at=assessment.submitted_at,
         skipped_at=assessment.skipped_at,
+        timed_out_at=assessment.timed_out_at,
         profile=LearnerProfileResponse.model_validate(profile),
     )
 
@@ -301,7 +294,56 @@ def _detect_stack(db: Session, snapshot_id: str) -> list[str]:
     return stack
 
 
+def _project_assessment_profile(
+    db: Session,
+    assessment: AssessmentSession,
+    *,
+    event_type: str,
+) -> None:
+    answers = {item.item_id: item.answer for item in assessment.responses}
+    projection = project_profile(
+        questions=assessment.questions,
+        answers=answers,
+        previous_mastery=assessment.profile.concept_mastery,
+    )
+    profile = assessment.profile
+    profile.goal = projection["goal"]
+    profile.preferred_explanation = projection["preferred_explanation"]
+    profile.pace = projection["pace"]
+    apply_mastery_projection(
+        db,
+        profile=profile,
+        projected_mastery=projection["concept_mastery"],
+        event_type=event_type,
+        source_type="assessment",
+        source_id=assessment.id,
+        evidence={
+            "assessment_version": ASSESSMENT_VERSION,
+            "answered_item_ids": sorted(answers),
+        },
+    )
+    profile.assessment_version = ASSESSMENT_VERSION
+
+
+def _expire_assessment(db: Session, assessment: AssessmentSession) -> bool:
+    if assessment.status != "active":
+        return False
+    expires_at = getattr(assessment, "expires_at", None)
+    if expires_at is None:
+        return False
+    now = utc_now()
+    comparable_now = now.replace(tzinfo=None) if expires_at.tzinfo is None else now
+    if comparable_now < expires_at:
+        return False
+    _project_assessment_profile(db, assessment, event_type="assessment_timeout")
+    assessment.status = "timed_out"
+    assessment.timed_out_at = now
+    return True
+
+
 def _refresh_assessment(db: Session, assessment: AssessmentSession) -> bool:
+    if _expire_assessment(db, assessment):
+        return True
     if assessment.status != "active":
         return False
     stack = _detect_stack(db, assessment.snapshot_id)

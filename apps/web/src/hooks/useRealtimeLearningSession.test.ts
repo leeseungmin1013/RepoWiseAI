@@ -112,6 +112,7 @@ describe("useRealtimeLearningSession", () => {
     expect(exchangeSdp).toHaveBeenCalledWith(
       "browser-offer-sdp",
       expect.any(AbortSignal),
+      false,
     );
     expect(peer.remoteDescription).toEqual({
       type: "answer",
@@ -161,6 +162,49 @@ describe("useRealtimeLearningSession", () => {
     });
   });
 
+  it("supports opt-in VAD and closes the persisted server session", async () => {
+    const { microphoneTrack } = installMicrophone();
+    const peer = new FakePeerConnection();
+    const stopSession = vi.fn().mockResolvedValue({ status: "ended" });
+    const exchangeSdp = vi.fn().mockResolvedValue({
+      sdp: "server-answer-sdp",
+      voiceSessionId: "voiceses_1",
+      maxDurationSeconds: 180,
+    });
+    const { result } = renderHook(() =>
+      useRealtimeLearningSession({
+        exchangeSdp,
+        stopSession,
+        defaultVadEnabled: true,
+        createPeerConnection: () => peer as unknown as RTCPeerConnection,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.start();
+    });
+
+    expect(exchangeSdp).toHaveBeenCalledWith(
+      "browser-offer-sdp",
+      expect.any(AbortSignal),
+      true,
+    );
+    expect(result.current.isVadEnabled).toBe(true);
+    expect(microphoneTrack.enabled).toBe(true);
+
+    act(() => peer.dataChannel.open());
+    act(() => {
+      peer.dataChannel.receive({
+        type: "conversation.item.input_audio_transcription.completed",
+        transcript: "중지",
+      });
+    });
+
+    expect(result.current.status).toBe("stopped");
+    expect(microphoneTrack.stop).toHaveBeenCalledOnce();
+    expect(stopSession).toHaveBeenCalledOnce();
+    expect(stopSession).toHaveBeenCalledWith("voiceses_1");
+  });
   it("attaches remote audio, speaks only verified text, and releases resources", async () => {
     const { localStream, microphoneTrack } = installMicrophone();
     const peer = new FakePeerConnection();

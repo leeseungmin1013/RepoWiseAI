@@ -1,5 +1,6 @@
 import json
 from collections import Counter
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -13,6 +14,7 @@ from app.core.auth import AuthDep
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.models import (
+    AnalysisJob,
     FileRecord,
     OrganizationRepository,
     RepositorySnapshot,
@@ -44,7 +46,7 @@ from app.navigation.versions import (
     PROJECT_MAP_VERSION,
     REPOSITORY_STORY_VERSION,
 )
-from app.queue import enqueue_repository_analysis
+from app.queue import cancel_repository_analysis_job, enqueue_repository_analysis
 from app.schemas import (
     AnalysisJobResponse,
     ArchitectureGraphDiffResponse,
@@ -83,9 +85,38 @@ SymbolLimit = Annotated[int, Query(ge=1, le=500)]
 def to_snapshot_response(snapshot: RepositorySnapshot) -> SnapshotResponse:
     latest_job = max(snapshot.jobs, key=lambda item: item.created_at) if snapshot.jobs else None
     response = SnapshotResponse.model_validate(snapshot)
+    job_response = None
+    if latest_job is not None:
+        runtime_state, stalled_reason = analysis_runtime_state(latest_job)
+        job_response = AnalysisJobResponse.model_validate(latest_job).model_copy(
+            update={"runtime_state": runtime_state, "stalled_reason": stalled_reason}
+        )
     return response.model_copy(
-        update={"job": AnalysisJobResponse.model_validate(latest_job) if latest_job else None}
+        update={"job": job_response}
     )
+
+
+def analysis_runtime_state(
+    job: AnalysisJob, *, now: datetime | None = None
+) -> tuple[str, str | None]:
+    if job.status in {"finished", "failed"}:
+        return "terminal", None
+    current_time = now or datetime.now(UTC)
+    if job.status == "queued":
+        queued_since = job.last_progress_at or job.created_at
+        if (current_time - queued_since).total_seconds() > settings.analysis_queue_stall_seconds:
+            return "stalled", "worker_unavailable"
+        return "queued", None
+    reference = job.last_progress_at or job.heartbeat_at or job.started_at or job.created_at
+    if job.started_at and (
+        current_time - job.started_at
+    ).total_seconds() > settings.analysis_job_timeout_seconds:
+        return "stalled", "analysis_deadline_exceeded"
+    if (
+        current_time - reference
+    ).total_seconds() > settings.analysis_progress_stall_seconds:
+        return "stalled", "progress_timeout"
+    return "running", None
 
 
 def load_snapshot(db: Session, snapshot_id: str) -> RepositorySnapshot:
@@ -203,6 +234,59 @@ def list_snapshots(db: SessionDep, auth: AuthDep, limit: SnapshotLimit = 10):
 @router.get("/snapshots/{snapshot_id}", response_model=SnapshotResponse)
 def get_snapshot(snapshot_id: str, db: SessionDep):
     return to_snapshot_response(load_snapshot(db, snapshot_id))
+
+
+@router.post("/snapshots/{snapshot_id}/retry", response_model=SnapshotResponse)
+def retry_snapshot_analysis(snapshot_id: str, db: SessionDep, auth: AuthDep):
+    snapshot = load_snapshot(db, snapshot_id)
+    if auth.authenticated:
+        attached = db.scalar(
+            select(OrganizationRepository.id).where(
+                OrganizationRepository.organization_id == auth.organization_id,
+                OrganizationRepository.repository_id == snapshot.repository_id,
+            )
+        )
+        if attached is None:
+            raise HTTPException(status_code=404, detail="Snapshot not found")
+    job = max(snapshot.jobs, key=lambda item: item.created_at) if snapshot.jobs else None
+    if job is None:
+        raise HTTPException(status_code=409, detail="Analysis job not found")
+    runtime_state, _ = analysis_runtime_state(job)
+    if job.status != "failed" and runtime_state != "stalled":
+        raise HTTPException(status_code=409, detail="Analysis is still active")
+    if job.retry_count >= settings.analysis_max_retries:
+        raise HTTPException(status_code=409, detail="Analysis retry limit reached")
+    cancel_repository_analysis_job(snapshot.id, attempt=job.retry_count)
+    job.retry_count += 1
+    job.status = "queued"
+    job.stage = "pending"
+    job.progress_current = 0
+    job.progress_total = 0
+    job.error_code = None
+    job.error_detail = None
+    job.started_at = None
+    job.heartbeat_at = None
+    job.last_progress_at = datetime.now(UTC)
+    job.finished_at = None
+    snapshot.status = "pending"
+    snapshot.error_message = None
+    db.commit()
+    try:
+        enqueue_repository_analysis(
+            snapshot.id,
+            trace_id=job.trace_id,
+            attempt=job.retry_count,
+        )
+    except Exception as exc:
+        job.status = "failed"
+        job.error_code = "queue_unavailable"
+        job.error_detail = str(exc)
+        job.finished_at = datetime.now(UTC)
+        snapshot.status = "failed"
+        snapshot.error_message = "Analysis queue is unavailable"
+        db.commit()
+        raise HTTPException(status_code=503, detail="Analysis queue is unavailable") from exc
+    return to_snapshot_response(snapshot)
 
 
 @router.get("/snapshots/{snapshot_id}/tree", response_model=list[TreeNode])

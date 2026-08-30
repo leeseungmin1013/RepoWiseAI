@@ -47,6 +47,7 @@ class GeneratedAnswer:
     model_name: str | None
     voice_summary: str | None = None
     usage: dict[str, int] = field(default_factory=dict)
+    fallback_reason: str | None = None
 
 
 class OpenAIAnswerPayload(BaseModel):
@@ -84,6 +85,7 @@ class GroundedAnswerGenerator:
                 status="insufficient_evidence",
                 mode="retrieval_only",
                 model_name=None,
+                fallback_reason="insufficient_evidence",
             )
         if self._uses_openai():
             try:
@@ -96,13 +98,16 @@ class GroundedAnswerGenerator:
                     reasoning_effort=reasoning_effort,
                     task_kind=task_kind,
                 )
-            except Exception:
+            except Exception as exc:
                 if not allow_retrieval_fallback:
                     raise
-                return self._retrieval_only(evidence)
+                return self._retrieval_only(
+                    evidence,
+                    fallback_reason=f"provider_error:{type(exc).__name__}",
+                )
         if not allow_retrieval_fallback:
             raise RuntimeError("OpenAI generation is unavailable for deep tasks")
-        return self._retrieval_only(evidence)
+        return self._retrieval_only(evidence, fallback_reason="provider_unavailable")
 
     def _uses_openai(self) -> bool:
         provider = self.settings.generation_provider
@@ -194,7 +199,9 @@ Evidence:
         )
 
     @staticmethod
-    def _retrieval_only(evidence: list[ResolvedEvidence]) -> GeneratedAnswer:
+    def _retrieval_only(
+        evidence: list[ResolvedEvidence], *, fallback_reason: str | None = None
+    ) -> GeneratedAnswer:
         primary = evidence[0]
         subject = primary.symbol_name or primary.title
         selected: list[ResolvedEvidence] = []
@@ -222,4 +229,5 @@ Evidence:
             status="grounded",
             mode="retrieval_only",
             model_name=None,
+            fallback_reason=fallback_reason,
         )

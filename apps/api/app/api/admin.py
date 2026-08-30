@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -12,12 +12,17 @@ from app.core.authorization import ensure_organization_access
 from app.core.db import get_db
 from app.models import (
     AuditEvent,
+    LearnerProfile,
+    LearningSession,
     SemanticCacheEntry,
     UsageEvent,
     UsageReservation,
+    VoiceSession,
+    VoiceTurn,
 )
 from app.schemas import BonusCreditCreate, BonusCreditResponse
 from app.services.usage import UsageService
+from app.services.voice_metrics import summarize_voice_metrics
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 SessionDep = Annotated[Session, Depends(get_db)]
@@ -58,6 +63,49 @@ def grant_bonus_credit(
     )
     db.commit()
     return grant
+
+
+@router.get("/voice/metrics")
+def voice_metrics(
+    db: SessionDep,
+    admin: AdminDep,
+    hours: int = 24,
+) -> dict:
+    bounded_hours = min(max(hours, 1), 24 * 30)
+    since = datetime.now(UTC) - timedelta(hours=bounded_hours)
+    sessions = db.scalars(
+        select(VoiceSession)
+        .join(LearningSession, LearningSession.id == VoiceSession.learning_session_id)
+        .join(LearnerProfile, LearnerProfile.id == LearningSession.learner_profile_id)
+        .where(
+            LearnerProfile.organization_id == admin.organization_id,
+            VoiceSession.started_at >= since,
+        )
+    ).all()
+    turns = db.scalars(
+        select(VoiceTurn)
+        .join(VoiceSession, VoiceSession.id == VoiceTurn.voice_session_id)
+        .join(LearningSession, LearningSession.id == VoiceSession.learning_session_id)
+        .join(LearnerProfile, LearnerProfile.id == LearningSession.learner_profile_id)
+        .where(
+            LearnerProfile.organization_id == admin.organization_id,
+            VoiceTurn.created_at >= since,
+        )
+    ).all()
+    usage_events = db.scalars(
+        select(UsageEvent).where(
+            UsageEvent.organization_id == admin.organization_id,
+            UsageEvent.feature == "realtime_voice",
+            UsageEvent.created_at >= since,
+        )
+    ).all()
+    return {
+        "organization_id": admin.organization_id,
+        "window_hours": bounded_hours,
+        "since": since.isoformat(),
+        "checked_at": datetime.now(UTC).isoformat(),
+        **summarize_voice_metrics(sessions, turns, usage_events),
+    }
 
 
 @router.get("/usage/reconciliation")

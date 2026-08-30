@@ -37,6 +37,7 @@ import type {
   LearningSession,
   RemediationBranch,
   RemediationMode,
+  RoadmapProposal,
   SourceFile,
   TeachingStyle,
 } from "@/lib/api";
@@ -45,6 +46,7 @@ type Props = {
   path: LearningPath | null;
   session: LearningSession | null;
   remediation: RemediationBranch | null;
+  roadmapProposal: RoadmapProposal | null;
   activity: LearningActivity | null;
   activityAttempt: ActivityAttemptSummary | null;
   activityBusy: boolean;
@@ -59,6 +61,8 @@ type Props = {
   onFeedback: (lesson: LearningLesson, eventType: LearningFeedbackType) => void;
   onHelp: (mode: RemediationMode) => void;
   onCompleteHelp: () => void;
+  onApplyRoadmap: () => void;
+  onRejectRoadmap: () => void;
   onReplan: () => void;
   onSubmitActivity: (selectedChoiceId: string) => void;
   onAsk: (question: string) => Promise<void>;
@@ -87,6 +91,7 @@ export function LearningJourneyPanel({
   path,
   session,
   remediation,
+  roadmapProposal,
   activity,
   activityAttempt,
   activityBusy,
@@ -101,6 +106,8 @@ export function LearningJourneyPanel({
   onFeedback,
   onHelp,
   onCompleteHelp,
+  onApplyRoadmap,
+  onRejectRoadmap,
   onReplan,
   onSubmitActivity,
   onAsk,
@@ -158,10 +165,10 @@ export function LearningJourneyPanel({
             <GraduationCap aria-hidden size={16} />
             <span>Adaptive Learning Journey</span>
             <button
-              aria-label="학습 경로 다시 맞추기"
+              aria-label="학습 경로 변경안 만들기"
               disabled={busy}
               onClick={onReplan}
-              title="현재 이해도로 학습 경로 다시 맞추기"
+              title="현재 이해도로 변경안을 만들고 확인하기"
               type="button"
             >
               <RefreshCw className={busy ? "spin" : ""} aria-hidden size={13} />
@@ -181,7 +188,78 @@ export function LearningJourneyPanel({
           </div>
         </section>
 
-        {session.status === "completed" ? (
+                {roadmapProposal ? (
+          <section
+            className={"roadmap-proposal is-" + roadmapProposal.status}
+            aria-label="학습 경로 변경안"
+          >
+            <div className="roadmap-proposal-heading">
+              <div>
+                <strong>
+                  {roadmapProposal.status === "conflicted"
+                    ? "경로가 바뀌어 새 변경안이 필요합니다"
+                    : "학습 경로 변경안"}
+                </strong>
+                <span>
+                  기준 revision {roadmapProposal.base_revision} ·{" "}
+                  {roadmapProposal.diff.selected_lessons.length}개 레슨
+                </span>
+              </div>
+              <small>
+                {roadmapProposal.diff.estimated_minutes_delta >= 0 ? "+" : ""}
+                {roadmapProposal.diff.estimated_minutes_delta}분
+              </small>
+            </div>
+            {roadmapProposal.status === "conflicted" ? (
+              <p>{roadmapProposal.failure_reason}</p>
+            ) : (
+              <>
+                <div className="roadmap-proposal-summary">
+                  <span>추가 {roadmapProposal.diff.added_lessons.length}</span>
+                  <span>제외 {roadmapProposal.diff.removed_lessons.length}</span>
+                  <span>
+                    순서 {roadmapProposal.diff.order_changed ? "변경" : "유지"}
+                  </span>
+                </div>
+                {roadmapProposal.diff.added_lessons.length ? (
+                  <ul>
+                    {roadmapProposal.diff.added_lessons.slice(0, 4).map((lesson) => (
+                      <li key={lesson.candidate_id}>
+                        <strong>{lesson.title}</strong>
+                        <span>{lesson.reason}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p>추가 레슨 없이 현재 이해도에 맞춰 순서와 범위만 조정합니다.</p>
+                )}
+              </>
+            )}
+            <div className="roadmap-proposal-actions">
+              {roadmapProposal.status === "proposed" ? (
+                <>
+                  <button disabled={busy} onClick={onRejectRoadmap} type="button">
+                    거절
+                  </button>
+                  <button
+                    className="is-primary"
+                    disabled={busy || !roadmapProposal.verification.valid}
+                    onClick={onApplyRoadmap}
+                    type="button"
+                  >
+                    {busy ? <LoaderCircle className="spin" aria-hidden size={13} /> : null}
+                    변경안 적용
+                  </button>
+                </>
+              ) : (
+                <button disabled={busy} onClick={onReplan} type="button">
+                  새 변경안 만들기
+                </button>
+              )}
+            </div>
+          </section>
+        ) : null}
+{session.status === "completed" ? (
           <div className="journey-complete">
             <CheckCircle2 aria-hidden size={18} />
             <div>
@@ -463,6 +541,15 @@ function CheckpointActivity({
       <div className="code-checkpoint-heading">
         <Target aria-hidden size={14} />
         <strong>코드로 이해 확인</strong>
+        {activity ? (
+          <small>
+            {activity.difficulty === "advanced"
+              ? "심화"
+              : activity.difficulty === "intermediate"
+                ? "표준"
+                : "기초"}
+          </small>
+        ) : null}
       </div>
       {!activity ? (
         <div className="code-checkpoint-loading">
@@ -601,6 +688,15 @@ function RemediationContent({
             <strong>{source.title}</strong>
             <small>
               {source.publisher} · {source.estimated_minutes}분
+            </small>
+            <small className={"source-freshness source-freshness-" + source.freshness_status}>
+              {source.freshness_status === "current"
+                ? "공식 링크 확인 · " +
+                  new Date(source.verified_at).toLocaleDateString("ko-KR")
+                : source.freshness_status === "unavailable"
+                  ? "일시 확인 불가 · 마지막 검증 " +
+                    new Date(source.verified_at).toLocaleDateString("ko-KR")
+                  : "링크 검증 대기"}
             </small>
           </span>
           <ExternalLink aria-hidden size={13} />

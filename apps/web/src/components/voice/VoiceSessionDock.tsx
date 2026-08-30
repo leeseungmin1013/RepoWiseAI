@@ -39,10 +39,12 @@ export function VoiceSessionDock({
     isSupported,
     isConnected,
     isTalking,
+    isVadEnabled,
     start,
     stop,
     startTalking,
     endTalking,
+    setVadEnabled,
     remoteAudioRef,
   },
   currentLessonLabel,
@@ -111,7 +113,9 @@ export function VoiceSessionDock({
               .filter(Boolean)
               .join(" ")}
           />
-          {statusLabels[status]}
+          {isVadEnabled && status === "ready"
+            ? "자동 감지 중 — 자연스럽게 말해 주세요"
+            : statusLabels[status]}
         </span>
         {interimTranscript ? (
           <span aria-live="polite" className={styles.transcript}>
@@ -184,14 +188,25 @@ export function VoiceSessionDock({
             </button>
           </>
         ) : (
-          <button
-            className={styles.startButton}
-            disabled={disabled || !isSupported}
-            onClick={() => void start()}
-            type="button"
-          >
-            음성 대화 시작
-          </button>
+          <>
+            <label className={styles.vadToggle}>
+              <input
+                checked={isVadEnabled}
+                disabled={disabled}
+                onChange={(event) => setVadEnabled(event.target.checked)}
+                type="checkbox"
+              />
+              자동 음성 감지
+            </label>
+            <button
+              className={styles.startButton}
+              disabled={disabled || !isSupported}
+              onClick={() => void start()}
+              type="button"
+            >
+              음성 대화 시작
+            </button>
+          </>
         )}
       </div>
     </section>

@@ -1,0 +1,1254 @@
+{
+  "name": "voice-routing-ko-v1",
+  "expected_category_counts": {
+    "learning_command": 25,
+    "short_conversation": 15,
+    "grounded_question": 25,
+    "impact_analysis": 15,
+    "official_research": 10,
+    "roadmap": 10
+  },
+  "thresholds": {
+    "route_accuracy": 0.95,
+    "tool_accuracy": 0.95,
+    "forbidden_direct_answer_rate": 0.0,
+    "required_context_recall": 1.0
+  },
+  "cases": [
+    {
+      "id": "learning_command-01",
+      "utterance": "멈춰",
+      "category": "learning_command",
+      "expected_route": "learning_command",
+      "allowed_tool": "apply_learning_action",
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "learning_session",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "learning_command-02",
+      "utterance": "말 그만",
+      "category": "learning_command",
+      "expected_route": "learning_command",
+      "allowed_tool": "apply_learning_action",
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "learning_session",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "learning_command-03",
+      "utterance": "그만 말해",
+      "category": "learning_command",
+      "expected_route": "learning_command",
+      "allowed_tool": "apply_learning_action",
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "learning_session",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "learning_command-04",
+      "utterance": "중단해",
+      "category": "learning_command",
+      "expected_route": "learning_command",
+      "allowed_tool": "apply_learning_action",
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "learning_session",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "learning_command-05",
+      "utterance": "음소거",
+      "category": "learning_command",
+      "expected_route": "learning_command",
+      "allowed_tool": "apply_learning_action",
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "learning_session",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "learning_command-06",
+      "utterance": "마이크 꺼",
+      "category": "learning_command",
+      "expected_route": "learning_command",
+      "allowed_tool": "apply_learning_action",
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "learning_session",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "learning_command-07",
+      "utterance": "마이크 끄기",
+      "category": "learning_command",
+      "expected_route": "learning_command",
+      "allowed_tool": "apply_learning_action",
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "learning_session",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "learning_command-08",
+      "utterance": "다음",
+      "category": "learning_command",
+      "expected_route": "learning_command",
+      "allowed_tool": "apply_learning_action",
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "learning_session",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "learning_command-09",
+      "utterance": "다음 레슨",
+      "category": "learning_command",
+      "expected_route": "learning_command",
+      "allowed_tool": "apply_learning_action",
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "learning_session",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "learning_command-10",
+      "utterance": "다음으로",
+      "category": "learning_command",
+      "expected_route": "learning_command",
+      "allowed_tool": "apply_learning_action",
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "learning_session",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "learning_command-11",
+      "utterance": "이전",
+      "category": "learning_command",
+      "expected_route": "learning_command",
+      "allowed_tool": "apply_learning_action",
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "learning_session",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "learning_command-12",
+      "utterance": "이전 레슨",
+      "category": "learning_command",
+      "expected_route": "learning_command",
+      "allowed_tool": "apply_learning_action",
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "learning_session",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "learning_command-13",
+      "utterance": "앞으로 돌아가",
+      "category": "learning_command",
+      "expected_route": "learning_command",
+      "allowed_tool": "apply_learning_action",
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "learning_session",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "learning_command-14",
+      "utterance": "원래 레슨으로 돌아가",
+      "category": "learning_command",
+      "expected_route": "learning_command",
+      "allowed_tool": "apply_learning_action",
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "learning_session",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "learning_command-15",
+      "utterance": "돌아가기",
+      "category": "learning_command",
+      "expected_route": "learning_command",
+      "allowed_tool": "apply_learning_action",
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "learning_session",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "learning_command-16",
+      "utterance": "이해했어",
+      "category": "learning_command",
+      "expected_route": "learning_command",
+      "allowed_tool": "apply_learning_action",
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "learning_session",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "learning_command-17",
+      "utterance": "이해했어요",
+      "category": "learning_command",
+      "expected_route": "learning_command",
+      "allowed_tool": "apply_learning_action",
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "learning_session",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "learning_command-18",
+      "utterance": "알겠어요",
+      "category": "learning_command",
+      "expected_route": "learning_command",
+      "allowed_tool": "apply_learning_action",
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "learning_session",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "learning_command-19",
+      "utterance": "아직 어려워",
+      "category": "learning_command",
+      "expected_route": "learning_command",
+      "allowed_tool": "apply_learning_action",
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "learning_session",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "learning_command-20",
+      "utterance": "잘 모르겠어",
+      "category": "learning_command",
+      "expected_route": "learning_command",
+      "allowed_tool": "apply_learning_action",
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "learning_session",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "learning_command-21",
+      "utterance": "건너뛸래",
+      "category": "learning_command",
+      "expected_route": "learning_command",
+      "allowed_tool": "apply_learning_action",
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "learning_session",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "learning_command-22",
+      "utterance": "스킵",
+      "category": "learning_command",
+      "expected_route": "learning_command",
+      "allowed_tool": "apply_learning_action",
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "learning_session",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "learning_command-23",
+      "utterance": "다시 읽어줘",
+      "category": "learning_command",
+      "expected_route": "learning_command",
+      "allowed_tool": "apply_learning_action",
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "learning_session",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "learning_command-24",
+      "utterance": "짧게 말해줘",
+      "category": "learning_command",
+      "expected_route": "learning_command",
+      "allowed_tool": "apply_learning_action",
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "learning_session",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "learning_command-25",
+      "utterance": "1번",
+      "category": "learning_command",
+      "expected_route": "learning_command",
+      "allowed_tool": "apply_learning_action",
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "learning_session",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "short_conversation-01",
+      "utterance": "안녕, 오늘도 시작해보자",
+      "category": "short_conversation",
+      "expected_route": "short_conversation",
+      "allowed_tool": null,
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "recent_voice_turns"
+      ]
+    },
+    {
+      "id": "short_conversation-02",
+      "utterance": "설명 고마워",
+      "category": "short_conversation",
+      "expected_route": "short_conversation",
+      "allowed_tool": null,
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "recent_voice_turns"
+      ]
+    },
+    {
+      "id": "short_conversation-03",
+      "utterance": "내 말 잘 들려?",
+      "category": "short_conversation",
+      "expected_route": "short_conversation",
+      "allowed_tool": null,
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "recent_voice_turns"
+      ]
+    },
+    {
+      "id": "short_conversation-04",
+      "utterance": "그게 무슨 뜻이야?",
+      "category": "short_conversation",
+      "expected_route": "short_conversation",
+      "allowed_tool": null,
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "recent_voice_turns"
+      ]
+    },
+    {
+      "id": "short_conversation-05",
+      "utterance": "잠깐만 기다려줘",
+      "category": "short_conversation",
+      "expected_route": "short_conversation",
+      "allowed_tool": null,
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "recent_voice_turns"
+      ]
+    },
+    {
+      "id": "short_conversation-06",
+      "utterance": "아, 그렇구나 맞아?",
+      "category": "short_conversation",
+      "expected_route": "short_conversation",
+      "allowed_tool": null,
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "recent_voice_turns"
+      ]
+    },
+    {
+      "id": "short_conversation-07",
+      "utterance": "고마워 계속해줘",
+      "category": "short_conversation",
+      "expected_route": "short_conversation",
+      "allowed_tool": null,
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "recent_voice_turns"
+      ]
+    },
+    {
+      "id": "short_conversation-08",
+      "utterance": "안녕 AI 선생님",
+      "category": "short_conversation",
+      "expected_route": "short_conversation",
+      "allowed_tool": null,
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "recent_voice_turns"
+      ]
+    },
+    {
+      "id": "short_conversation-09",
+      "utterance": "지금 내 목소리 잘 들려?",
+      "category": "short_conversation",
+      "expected_route": "short_conversation",
+      "allowed_tool": null,
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "recent_voice_turns"
+      ]
+    },
+    {
+      "id": "short_conversation-10",
+      "utterance": "그 말이 무슨 뜻이야?",
+      "category": "short_conversation",
+      "expected_route": "short_conversation",
+      "allowed_tool": null,
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "recent_voice_turns"
+      ]
+    },
+    {
+      "id": "short_conversation-11",
+      "utterance": "잠깐 생각할게",
+      "category": "short_conversation",
+      "expected_route": "short_conversation",
+      "allowed_tool": null,
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "recent_voice_turns"
+      ]
+    },
+    {
+      "id": "short_conversation-12",
+      "utterance": "응, 맞아?",
+      "category": "short_conversation",
+      "expected_route": "short_conversation",
+      "allowed_tool": null,
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "recent_voice_turns"
+      ]
+    },
+    {
+      "id": "short_conversation-13",
+      "utterance": "설명해줘서 고마워",
+      "category": "short_conversation",
+      "expected_route": "short_conversation",
+      "allowed_tool": null,
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "recent_voice_turns"
+      ]
+    },
+    {
+      "id": "short_conversation-14",
+      "utterance": "안녕 다시 왔어",
+      "category": "short_conversation",
+      "expected_route": "short_conversation",
+      "allowed_tool": null,
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "recent_voice_turns"
+      ]
+    },
+    {
+      "id": "short_conversation-15",
+      "utterance": "잠깐 쉬었다 하자",
+      "category": "short_conversation",
+      "expected_route": "short_conversation",
+      "allowed_tool": null,
+      "forbidden_direct_answer": false,
+      "required_context": [
+        "recent_voice_turns"
+      ]
+    },
+    {
+      "id": "grounded_question-01",
+      "utterance": "현재 함수는 어떤 역할을 해?",
+      "category": "grounded_question",
+      "expected_route": "grounded_question",
+      "allowed_tool": "answer_with_repository_evidence",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "grounded_question-02",
+      "utterance": "이 클래스의 책임을 코드 근거로 알려줘",
+      "category": "grounded_question",
+      "expected_route": "grounded_question",
+      "allowed_tool": "answer_with_repository_evidence",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "grounded_question-03",
+      "utterance": "선택한 줄에서 예외는 왜 발생해?",
+      "category": "grounded_question",
+      "expected_route": "grounded_question",
+      "allowed_tool": "answer_with_repository_evidence",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "grounded_question-04",
+      "utterance": "이 API 엔드포인트가 반환하는 값은 뭐야?",
+      "category": "grounded_question",
+      "expected_route": "grounded_question",
+      "allowed_tool": "answer_with_repository_evidence",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "grounded_question-05",
+      "utterance": "현재 컴포넌트의 상태 흐름을 설명해줘",
+      "category": "grounded_question",
+      "expected_route": "grounded_question",
+      "allowed_tool": "answer_with_repository_evidence",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "grounded_question-06",
+      "utterance": "이 변수는 어디에서 설정돼?",
+      "category": "grounded_question",
+      "expected_route": "grounded_question",
+      "allowed_tool": "answer_with_repository_evidence",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "grounded_question-07",
+      "utterance": "이 조건문이 필요한 이유는 뭐야?",
+      "category": "grounded_question",
+      "expected_route": "grounded_question",
+      "allowed_tool": "answer_with_repository_evidence",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "grounded_question-08",
+      "utterance": "선택한 코드의 입력과 출력은 뭐야?",
+      "category": "grounded_question",
+      "expected_route": "grounded_question",
+      "allowed_tool": "answer_with_repository_evidence",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "grounded_question-09",
+      "utterance": "이 함수가 호출되는 위치를 알려줘",
+      "category": "grounded_question",
+      "expected_route": "grounded_question",
+      "allowed_tool": "answer_with_repository_evidence",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "grounded_question-10",
+      "utterance": "현재 레슨 코드에서 핵심 개념은 뭐야?",
+      "category": "grounded_question",
+      "expected_route": "grounded_question",
+      "allowed_tool": "answer_with_repository_evidence",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "grounded_question-11",
+      "utterance": "이 타입 정의가 보장하는 계약은 뭐야?",
+      "category": "grounded_question",
+      "expected_route": "grounded_question",
+      "allowed_tool": "answer_with_repository_evidence",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "grounded_question-12",
+      "utterance": "이 테스트가 검증하는 동작은 뭐야?",
+      "category": "grounded_question",
+      "expected_route": "grounded_question",
+      "allowed_tool": "answer_with_repository_evidence",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "grounded_question-13",
+      "utterance": "이 SQL 쿼리의 필터 조건을 설명해줘",
+      "category": "grounded_question",
+      "expected_route": "grounded_question",
+      "allowed_tool": "answer_with_repository_evidence",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "grounded_question-14",
+      "utterance": "현재 파일의 진입점은 어디야?",
+      "category": "grounded_question",
+      "expected_route": "grounded_question",
+      "allowed_tool": "answer_with_repository_evidence",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "grounded_question-15",
+      "utterance": "이 에러 처리는 어떤 경우에 실행돼?",
+      "category": "grounded_question",
+      "expected_route": "grounded_question",
+      "allowed_tool": "answer_with_repository_evidence",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "grounded_question-16",
+      "utterance": "이 훅이 다시 렌더링되는 조건은 뭐야?",
+      "category": "grounded_question",
+      "expected_route": "grounded_question",
+      "allowed_tool": "answer_with_repository_evidence",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "grounded_question-17",
+      "utterance": "이 모델 필드가 nullable인 이유는 뭐야?",
+      "category": "grounded_question",
+      "expected_route": "grounded_question",
+      "allowed_tool": "answer_with_repository_evidence",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "grounded_question-18",
+      "utterance": "이 서비스의 반환 구조를 코드에서 찾아줘",
+      "category": "grounded_question",
+      "expected_route": "grounded_question",
+      "allowed_tool": "answer_with_repository_evidence",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "grounded_question-19",
+      "utterance": "현재 선택 영역의 실행 순서를 말해줘",
+      "category": "grounded_question",
+      "expected_route": "grounded_question",
+      "allowed_tool": "answer_with_repository_evidence",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "grounded_question-20",
+      "utterance": "이 데코레이터가 하는 일을 알려줘",
+      "category": "grounded_question",
+      "expected_route": "grounded_question",
+      "allowed_tool": "answer_with_repository_evidence",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "grounded_question-21",
+      "utterance": "이벤트가 저장되는 테이블은 어디야?",
+      "category": "grounded_question",
+      "expected_route": "grounded_question",
+      "allowed_tool": "answer_with_repository_evidence",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "grounded_question-22",
+      "utterance": "이 함수의 호출자가 기대하는 값은 뭐야?",
+      "category": "grounded_question",
+      "expected_route": "grounded_question",
+      "allowed_tool": "answer_with_repository_evidence",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "grounded_question-23",
+      "utterance": "현재 코드의 보안 검사는 어디에 있어?",
+      "category": "grounded_question",
+      "expected_route": "grounded_question",
+      "allowed_tool": "answer_with_repository_evidence",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "grounded_question-24",
+      "utterance": "이 캐시 키는 어떻게 만들어져?",
+      "category": "grounded_question",
+      "expected_route": "grounded_question",
+      "allowed_tool": "answer_with_repository_evidence",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "grounded_question-25",
+      "utterance": "이 레슨 코드와 테스트 근거를 함께 보여줘",
+      "category": "grounded_question",
+      "expected_route": "grounded_question",
+      "allowed_tool": "answer_with_repository_evidence",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "current_lesson"
+      ]
+    },
+    {
+      "id": "impact_analysis-01",
+      "utterance": "이 함수를 바꾸면 어떤 파일에 영향이 가?",
+      "category": "impact_analysis",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "dependency_graph"
+      ]
+    },
+    {
+      "id": "impact_analysis-02",
+      "utterance": "인증 타입 변경의 다중 파일 영향을 분석해줘",
+      "category": "impact_analysis",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "dependency_graph"
+      ]
+    },
+    {
+      "id": "impact_analysis-03",
+      "utterance": "이 API 스키마 변경의 호출 체인을 추적해줘",
+      "category": "impact_analysis",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "dependency_graph"
+      ]
+    },
+    {
+      "id": "impact_analysis-04",
+      "utterance": "이 모델 필드를 지우면 어디까지 바뀌어?",
+      "category": "impact_analysis",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "dependency_graph"
+      ]
+    },
+    {
+      "id": "impact_analysis-05",
+      "utterance": "큐 재시도 로직 변경의 파급 범위를 알려줘",
+      "category": "impact_analysis",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "dependency_graph"
+      ]
+    },
+    {
+      "id": "impact_analysis-06",
+      "utterance": "이 컴포넌트 props 변경 영향을 분석해줘",
+      "category": "impact_analysis",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "dependency_graph"
+      ]
+    },
+    {
+      "id": "impact_analysis-07",
+      "utterance": "데이터베이스 마이그레이션의 다중 파일 영향을 봐줘",
+      "category": "impact_analysis",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "dependency_graph"
+      ]
+    },
+    {
+      "id": "impact_analysis-08",
+      "utterance": "이 서비스 반환값 변경의 호출 체인을 분석해줘",
+      "category": "impact_analysis",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "dependency_graph"
+      ]
+    },
+    {
+      "id": "impact_analysis-09",
+      "utterance": "이 환경 변수 이름을 바꾸면 어디까지 바뀌어?",
+      "category": "impact_analysis",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "dependency_graph"
+      ]
+    },
+    {
+      "id": "impact_analysis-10",
+      "utterance": "이 이벤트 타입 변경의 파급 효과를 찾아줘",
+      "category": "impact_analysis",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "dependency_graph"
+      ]
+    },
+    {
+      "id": "impact_analysis-11",
+      "utterance": "이 함수 시그니처 변경 영향을 깊게 분석해줘",
+      "category": "impact_analysis",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "dependency_graph"
+      ]
+    },
+    {
+      "id": "impact_analysis-12",
+      "utterance": "세션 종료 로직의 다중 파일 경로를 조사해줘",
+      "category": "impact_analysis",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "dependency_graph"
+      ]
+    },
+    {
+      "id": "impact_analysis-13",
+      "utterance": "이 타입을 공통 모듈로 옮길 때 영향을 알려줘",
+      "category": "impact_analysis",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "dependency_graph"
+      ]
+    },
+    {
+      "id": "impact_analysis-14",
+      "utterance": "이 캐시 정책 변경의 호출 체인을 분석해줘",
+      "category": "impact_analysis",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "dependency_graph"
+      ]
+    },
+    {
+      "id": "impact_analysis-15",
+      "utterance": "이 라우터 삭제가 미치는 영향을 분석해줘",
+      "category": "impact_analysis",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "snapshot",
+        "selection",
+        "dependency_graph"
+      ]
+    },
+    {
+      "id": "official_research-01",
+      "utterance": "이 개념의 공식 문서를 찾아줘",
+      "category": "official_research",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "current_concepts",
+        "official_domain_policy"
+      ]
+    },
+    {
+      "id": "official_research-02",
+      "utterance": "공식 React 자료를 현재 레슨에 맞게 추천해줘",
+      "category": "official_research",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "current_concepts",
+        "official_domain_policy"
+      ]
+    },
+    {
+      "id": "official_research-03",
+      "utterance": "이 API의 최신 공식 문서를 조사해줘",
+      "category": "official_research",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "current_concepts",
+        "official_domain_policy"
+      ]
+    },
+    {
+      "id": "official_research-04",
+      "utterance": "공식 튜토리얼에서 관련 예제를 찾아줘",
+      "category": "official_research",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "current_concepts",
+        "official_domain_policy"
+      ]
+    },
+    {
+      "id": "official_research-05",
+      "utterance": "이 라이브러리 공식 자료를 요약해줘",
+      "category": "official_research",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "current_concepts",
+        "official_domain_policy"
+      ]
+    },
+    {
+      "id": "official_research-06",
+      "utterance": "현재 개념과 맞는 공식 학습 자료를 찾아줘",
+      "category": "official_research",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "current_concepts",
+        "official_domain_policy"
+      ]
+    },
+    {
+      "id": "official_research-07",
+      "utterance": "공식 Python 문서에서 근거를 찾아줘",
+      "category": "official_research",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "current_concepts",
+        "official_domain_policy"
+      ]
+    },
+    {
+      "id": "official_research-08",
+      "utterance": "이 기능의 공식 마이그레이션 문서를 찾아줘",
+      "category": "official_research",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "current_concepts",
+        "official_domain_policy"
+      ]
+    },
+    {
+      "id": "official_research-09",
+      "utterance": "공식 보안 자료를 현재 코드와 연결해줘",
+      "category": "official_research",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "current_concepts",
+        "official_domain_policy"
+      ]
+    },
+    {
+      "id": "official_research-10",
+      "utterance": "이 주제의 공식 튜토리얼을 추천해줘",
+      "category": "official_research",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "current_concepts",
+        "official_domain_policy"
+      ]
+    },
+    {
+      "id": "roadmap-01",
+      "utterance": "현재 실력에 맞는 로드맵을 만들어줘",
+      "category": "roadmap",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "mastery",
+        "path_revision",
+        "completed_lessons"
+      ]
+    },
+    {
+      "id": "roadmap-02",
+      "utterance": "학습 경로를 더 짧게 바꿔줘",
+      "category": "roadmap",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "mastery",
+        "path_revision",
+        "completed_lessons"
+      ]
+    },
+    {
+      "id": "roadmap-03",
+      "utterance": "백엔드 중심 커리큘럼을 제안해줘",
+      "category": "roadmap",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "mastery",
+        "path_revision",
+        "completed_lessons"
+      ]
+    },
+    {
+      "id": "roadmap-04",
+      "utterance": "완료한 레슨을 보존한 로드맵을 만들어줘",
+      "category": "roadmap",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "mastery",
+        "path_revision",
+        "completed_lessons"
+      ]
+    },
+    {
+      "id": "roadmap-05",
+      "utterance": "인증 개념을 먼저 배우는 학습 경로를 제안해줘",
+      "category": "roadmap",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "mastery",
+        "path_revision",
+        "completed_lessons"
+      ]
+    },
+    {
+      "id": "roadmap-06",
+      "utterance": "현재 로드맵에 테스트 모듈을 추가해줘",
+      "category": "roadmap",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "mastery",
+        "path_revision",
+        "completed_lessons"
+      ]
+    },
+    {
+      "id": "roadmap-07",
+      "utterance": "초급자용 커리큘럼으로 다시 제안해줘",
+      "category": "roadmap",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "mastery",
+        "path_revision",
+        "completed_lessons"
+      ]
+    },
+    {
+      "id": "roadmap-08",
+      "utterance": "학습 경로의 순서를 바꾸는 안을 보여줘",
+      "category": "roadmap",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "mastery",
+        "path_revision",
+        "completed_lessons"
+      ]
+    },
+    {
+      "id": "roadmap-09",
+      "utterance": "남은 시간에 맞는 로드맵을 생성해줘",
+      "category": "roadmap",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "mastery",
+        "path_revision",
+        "completed_lessons"
+      ]
+    },
+    {
+      "id": "roadmap-10",
+      "utterance": "현재 커리큘럼을 심화 과정으로 바꿔줘",
+      "category": "roadmap",
+      "expected_route": "deep_task",
+      "allowed_tool": "start_deep_learning_task",
+      "forbidden_direct_answer": true,
+      "required_context": [
+        "mastery",
+        "path_revision",
+        "completed_lessons"
+      ]
+    }
+  ]
+}

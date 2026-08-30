@@ -18,10 +18,12 @@ function session(
     isSupported: true,
     isConnected: false,
     isTalking: false,
+    isVadEnabled: false,
     start: vi.fn().mockResolvedValue(undefined),
     stop: vi.fn(),
     startTalking: vi.fn(),
     endTalking: vi.fn(),
+    setVadEnabled: vi.fn(),
     sendEvent: vi.fn().mockReturnValue(true),
     speakVerifiedText: vi.fn().mockReturnValue(true),
     remoteAudioRef: vi.fn(),
@@ -40,6 +42,8 @@ describe("VoiceSessionDock", () => {
     );
 
     expect(screen.getByText("현재 학습: 비동기 함수 이해하기")).toBeTruthy();
+    fireEvent.click(screen.getByRole("checkbox", { name: "자동 음성 감지" }));
+    expect(controller.setVadEnabled).toHaveBeenCalledWith(true);
     fireEvent.click(screen.getByRole("button", { name: "음성 대화 시작" }));
     expect(controller.start).toHaveBeenCalledOnce();
 

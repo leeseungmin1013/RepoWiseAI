@@ -1,6 +1,8 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 API_ROOT = Path(__file__).resolve().parents[2]
@@ -30,16 +32,23 @@ class Settings(BaseSettings):
     generation_provider: str = "auto"
     generation_model: str = "gpt-5.4-mini"
     realtime_model: str = "gpt-realtime-2.1-mini"
+    realtime_quality_fallback_model: str = "gpt-realtime-2.1"
+    model_release_policy: Literal["alias", "snapshot"] = "alias"
+    model_snapshot_overrides_json: str = "{}"
     realtime_transcription_model: str = "gpt-realtime-whisper"
     realtime_transcription_delay: str = "low"
     realtime_voice: str = "marin"
     realtime_language: str = "ko"
     realtime_reasoning_effort: str = "minimal"
     realtime_api_url: str = "https://api.openai.com/v1/realtime/calls"
+    realtime_sideband_url: str = "wss://api.openai.com/v1/realtime"
+    realtime_sideband_reconnect_attempts: int = 3
     realtime_connect_timeout_seconds: float = 10.0
     realtime_request_timeout_seconds: float = 30.0
     realtime_max_sdp_bytes: int = 64 * 1024
     realtime_max_duration_seconds: int = 300
+    store_final_voice_transcripts: bool = True
+    voice_transcript_retention_days: int = Field(default=30, ge=1, le=3650)
     deep_model: str = "gpt-5.6-terra"
     deep_reasoning_effort: str = "medium"
     deep_escalation_model: str = "gpt-5.6-sol"
@@ -48,6 +57,11 @@ class Settings(BaseSettings):
     deep_queue_name: str = "repowise-deep-learning"
     queue_recovery_stale_seconds: int = 900
     queue_recovery_batch_size: int = 500
+    queue_recovery_interval_seconds: int = 60
+    analysis_queue_stall_seconds: int = 120
+    analysis_progress_stall_seconds: int = 180
+    analysis_max_retries: int = 2
+    worker_heartbeat_stale_seconds: int = 180
     research_model: str = "gpt-5.6-terra"
     research_reasoning_effort: str = "medium"
     research_allowed_domains: str = (
@@ -65,6 +79,11 @@ class Settings(BaseSettings):
     max_file_bytes: int = 1024 * 1024
     max_archive_bytes: int = 50 * 1024 * 1024
     analysis_job_timeout_seconds: int = 600
+    openai_timeout_seconds: float = 60.0
+    openai_max_retries: int = 2
+    embedding_batch_max_inputs: int = 64
+    embedding_batch_max_characters: int = 240_000
+    assessment_timeout_seconds: int = 900
     navigation_architecture_graph_enabled: bool = True
     navigation_llm_labels_enabled: bool = False
     auth_required: bool = False

@@ -91,6 +91,19 @@
   gap: 6px;
 }
 
+.vadToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted, #68757d);
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.vadToggle input {
+  accent-color: var(--teal, #087f73);
+}
+
 .startButton,
 .talkButton,
 .stopButton {

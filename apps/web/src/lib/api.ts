@@ -5,12 +5,21 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
 export type AnalysisJob = {
   id: string;
   snapshot_id: string;
+  trace_id?: string | null;
   stage: string;
   status: string;
   progress_current: number;
   progress_total: number;
   error_code: string | null;
   error_detail: string | null;
+  retry_count: number;
+  runtime_state: "queued" | "running" | "stalled" | "terminal";
+  stalled_reason: "worker_unavailable" | "progress_timeout" | "analysis_deadline_exceeded" | null;
+  created_at: string;
+  started_at: string | null;
+  heartbeat_at: string | null;
+  last_progress_at: string | null;
+  finished_at: string | null;
 };
 
 export type Snapshot = {
@@ -577,6 +586,7 @@ export type DeepTask = {
   kind: DeepTaskKind;
   progress: number;
   message: string;
+  trace_id?: string | null;
   result?: DeepTaskResult | null;
   error?: DeepTaskError | null;
 };
@@ -653,7 +663,7 @@ export type AssessmentSession = {
   id: string;
   snapshot_id: string;
   learner_profile_id: string;
-  status: "active" | "completed" | "skipped";
+  status: "active" | "completed" | "skipped" | "timed_out";
   detected_stack: string[];
   assessment_version: string;
   questions: AssessmentQuestion[];
@@ -661,8 +671,10 @@ export type AssessmentSession = {
   answered_count: number;
   total_count: number;
   created_at: string;
+  expires_at: string;
   submitted_at: string | null;
   skipped_at: string | null;
+  timed_out_at: string | null;
   profile: LearnerProfile;
 };
 
@@ -749,6 +761,55 @@ export type LearningReplanResult = {
   revision: number;
 };
 
+export type RoadmapProposalDiff = {
+  added_lessons: Array<{ candidate_id: string; title: string; reason: string }>;
+  removed_lessons: Array<{ candidate_id: string; title: string }>;
+  selected_lessons: Array<{
+    candidate_id: string;
+    title: string;
+    module_type: string;
+  }>;
+  order_changed: boolean;
+  previous_order: string[];
+  proposed_order: string[];
+  previous_estimated_minutes: number;
+  proposed_estimated_minutes: number;
+  estimated_minutes_delta: number;
+};
+
+export type RoadmapProposal = {
+  id: string;
+  learning_session_id: string;
+  path_id: string;
+  base_revision: number;
+  status: "proposed" | "applied" | "rejected" | "conflicted";
+  request: {
+    focus_concept_ids?: string[];
+    max_lessons?: number;
+    requested_candidate_ids?: string[];
+  };
+  candidates: Array<Record<string, unknown>>;
+  selected_candidate_ids: string[];
+  diff: RoadmapProposalDiff;
+  verification: {
+    valid: boolean;
+    errors: string[];
+    fallback_used?: boolean;
+    fallback_reason?: string;
+  };
+  failure_reason: string | null;
+  created_at: string;
+  applied_at: string | null;
+  rejected_at: string | null;
+};
+
+export type RoadmapApplyResult = {
+  proposal: RoadmapProposal;
+  path: LearningPath;
+  session: LearningSession;
+  preserved_lesson_ids: string[];
+  revision: number;
+};
 export type LearningFeedbackType = "opened" | "understood" | "needs_help" | "skip";
 export type RemediationMode =
   | "line_by_line"
@@ -787,6 +848,9 @@ export type LearningSource = {
   language: string;
   estimated_minutes: number;
   recommendation_reason?: string;
+  verified_at: string;
+  last_checked_at: string | null;
+  freshness_status: "current" | "unavailable" | "unverified" | "stale";
 };
 
 export type RemediationBranch = {
@@ -846,6 +910,7 @@ export type LearningActivity = {
   id: string;
   step_id: string;
   activity_type: string;
+  difficulty: "beginner" | "intermediate" | "advanced";
   prompt: string;
   choices: Array<{ id: string; label: string }>;
   concept_ids: string[];
@@ -868,6 +933,8 @@ export type ActivityAttempt = ActivityAttemptSummary & {
   correct_choice_id: string;
   evidence: Citation;
   mastery_updates: MasteryUpdate[];
+  trace_id?: string | null;
+  latency_ms?: number;
 };
 
 export type MasteryEvent = {
@@ -916,6 +983,25 @@ export type MasteryOverview = {
   recent_events: MasteryEvent[];
 };
 
+export type VoiceOfferAnswer = {
+  sdp: string;
+  voiceSessionId: string;
+  maxDurationSeconds: number;
+};
+
+export type VoiceSession = {
+  id: string;
+  learning_session_id: string;
+  chat_session_id: string;
+  status: string;
+  interaction_mode: "push_to_talk" | "vad";
+  realtime_model: string;
+  prompt_version: string;
+  started_at: string;
+  ended_at: string | null;
+  last_event_at: string | null;
+  disconnect_reason: string | null;
+};
 export type Organization = { id: string; name: string; slug: string; kind: string; role: string | null };
 export type Me = { user: { id: string; email: string | null; display_name: string | null }; active_organization: Organization; organizations: Organization[] };
 export type UsageCurrent = { organization_id: string; period_start: string; period_end: string; allowance_micro_usd: number; bonus_available_micro_usd: number; reserved_micro_usd: number; consumed_micro_usd: number; remaining_micro_usd: number };
@@ -996,11 +1082,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-async function requestText(path: string, init?: RequestInit): Promise<string> {
-  const response = await authenticatedFetch(path, init);
-  if (!response.ok) throw new ApiError(await errorMessage(response), response.status);
-  return response.text();
-}
 export const api = {
   health: () => request<Health>("/health"),
   me: () => request<Me>("/me"),
@@ -1028,6 +1109,8 @@ export const api = {
     }),
   listSnapshots: () => request<Snapshot[]>("/snapshots?limit=10"),
   getSnapshot: (snapshotId: string) => request<Snapshot>(`/snapshots/${snapshotId}`),
+  retrySnapshot: (snapshotId: string) =>
+    request<Snapshot>(`/snapshots/${snapshotId}/retry`, { method: "POST" }),
   getTree: (snapshotId: string) => request<TreeNode[]>(`/snapshots/${snapshotId}/tree`),
   getFile: (snapshotId: string, fileId: string) =>
     request<SourceFile>(`/snapshots/${snapshotId}/files/${fileId}`),
@@ -1119,18 +1202,69 @@ export const api = {
     }),
   getLearningSession: (sessionId: string) =>
     request<LearningSession>(`/learning-sessions/${sessionId}`),
-  exchangeVoiceOffer: (sessionId: string, sdp: string, signal?: AbortSignal) =>
-    requestText(`/learning-sessions/${sessionId}/voice/offer`, {
+  exchangeVoiceOffer: async (
+    sessionId: string,
+    sdp: string,
+    signal?: AbortSignal,
+    vad = false,
+  ): Promise<VoiceOfferAnswer> => {
+    const response = await authenticatedFetch(
+      `/learning-sessions/${sessionId}/voice/offer?vad=${vad ? "true" : "false"}`,
+      {
+        method: "POST",
+        body: sdp,
+        headers: { "Content-Type": "application/sdp" },
+        signal,
+      },
+    );
+    if (!response.ok)
+      throw new ApiError(await errorMessage(response), response.status);
+    const voiceSessionId = response.headers
+      .get("X-RepoWise-Voice-Session-Id")
+      ?.trim();
+    if (!voiceSessionId)
+      throw new Error("음성 서버가 세션 식별자를 반환하지 않았습니다.");
+    return {
+      sdp: await response.text(),
+      voiceSessionId,
+      maxDurationSeconds:
+        Number(response.headers.get("X-Realtime-Max-Duration")) || 300,
+    };
+  },
+  stopVoiceSession: (voiceSessionId: string) =>
+    request<VoiceSession>(`/voice-sessions/${voiceSessionId}/stop`, {
       method: "POST",
-      body: sdp,
-      headers: { "Content-Type": "application/sdp" },
-      signal,
     }),
   replanLearningSession: (sessionId: string) =>
     request<LearningReplanResult>(`/learning-sessions/${sessionId}/replan`, {
       method: "POST",
     }),
-  recordLearningFeedback: (
+  createRoadmapProposal: (
+    sessionId: string,
+    options?: { focusConceptIds?: string[]; maxLessons?: number },
+  ) =>
+    request<RoadmapProposal>(
+      "/learning-sessions/" + sessionId + "/roadmap-proposals",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          focus_concept_ids: options?.focusConceptIds ?? [],
+          max_lessons: options?.maxLessons ?? 40,
+        }),
+      },
+    ),
+  getRoadmapProposal: (proposalId: string) =>
+    request<RoadmapProposal>("/roadmap-proposals/" + proposalId),
+  applyRoadmapProposal: (proposalId: string) =>
+    request<RoadmapApplyResult>(
+      "/roadmap-proposals/" + proposalId + "/apply",
+      { method: "POST" },
+    ),
+  rejectRoadmapProposal: (proposalId: string) =>
+    request<RoadmapProposal>(
+      "/roadmap-proposals/" + proposalId + "/reject",
+      { method: "POST" },
+    ),  recordLearningFeedback: (
     sessionId: string,
     lessonId: string,
     eventType: LearningFeedbackType,
@@ -1142,7 +1276,19 @@ export const api = {
         body: JSON.stringify({ event_type: eventType }),
       },
     ),
-  createLearningActivity: (sessionId: string, stepId: string) =>
+  getChatAnswers: (sessionId: string, limit = 8) =>
+    request<ChatAnswer[]>(
+      "/chat/sessions/" +
+        encodeURIComponent(sessionId) +
+        "/messages?limit=" +
+        String(limit),
+    ),
+  getActiveRemediation: (sessionId: string) =>
+    request<RemediationBranch | null>(
+      "/learning-sessions/" +
+        encodeURIComponent(sessionId) +
+        "/remediation/active",
+    ),  createLearningActivity: (sessionId: string, stepId: string) =>
     request<LearningActivity>(
       `/learning-sessions/${sessionId}/steps/${stepId}/activity`,
       { method: "POST" },
@@ -1225,6 +1371,10 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ preferred_style: preferredStyle }),
     }),
+  listChatAnswers: (sessionId: string, limit = 20) =>
+    request<ChatAnswer[]>(
+      `/chat/sessions/${sessionId}/messages?limit=${limit}`,
+    ),
   ask: (
     sessionId: string,
     content: string,

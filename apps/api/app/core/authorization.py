@@ -21,6 +21,8 @@ from app.models import (
     OrganizationRepository,
     RemediationBranch,
     RepositorySnapshot,
+    RoadmapProposal,
+    VoiceSession,
 )
 
 
@@ -163,6 +165,34 @@ def ensure_remediation_access(db: Session, context: AuthContext, branch_id: str)
     ensure_learning_access(db, context, session)
 
 
+def ensure_voice_session_access(
+    db: Session,
+    context: AuthContext,
+    voice_session_id: str,
+) -> None:
+    voice_session = db.get(VoiceSession, voice_session_id)
+    if voice_session is None:
+        _not_found("Voice session")
+    session = db.get(LearningSession, voice_session.learning_session_id)
+    if session is None:
+        _not_found("Voice session")
+    ensure_learning_access(db, context, session)
+
+
+def ensure_roadmap_proposal_access(
+    db: Session,
+    context: AuthContext,
+    proposal_id: str,
+) -> None:
+    proposal = db.get(RoadmapProposal, proposal_id)
+    if proposal is None:
+        _not_found("Roadmap proposal")
+    session = db.get(LearningSession, proposal.learning_session_id)
+    if session is None:
+        _not_found("Roadmap proposal")
+    ensure_learning_access(db, context, session)
+
+
 def authorize_request_scope(request: Request, db: Session, context: AuthContext) -> None:
     """Authorize path-addressed resources before protected endpoint execution."""
     if not context.authenticated:
@@ -213,3 +243,9 @@ def authorize_request_scope(request: Request, db: Session, context: AuthContext)
     branch_id = params.get("branch_id")
     if branch_id:
         ensure_remediation_access(db, context, branch_id)
+    proposal_id = params.get("proposal_id")
+    if proposal_id:
+        ensure_roadmap_proposal_access(db, context, proposal_id)
+    voice_session_id = params.get("voice_session_id")
+    if voice_session_id:
+        ensure_voice_session_access(db, context, voice_session_id)

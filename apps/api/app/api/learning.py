@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from time import perf_counter
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -11,6 +12,7 @@ from app.ai.gateway import extract_usage
 from app.core.auth import AuthDep
 from app.core.config import get_settings
 from app.core.db import get_db
+from app.core.logging import current_trace_id
 from app.learning.activities import ensure_learning_activity
 from app.learning.concepts import build_mastery_overview, resolve_concept_gaps
 from app.learning.curriculum import ensure_learning_path
@@ -21,6 +23,13 @@ from app.learning.resources import (
     concept_bridge,
     recommended_sources,
     small_examples,
+)
+from app.learning.roadmap_proposals import (
+    RoadmapConflict,
+    apply_roadmap_proposal,
+    create_roadmap_proposal,
+    get_roadmap_proposal,
+    reject_roadmap_proposal,
 )
 from app.models import (
     ActivityAttempt,
@@ -37,6 +46,7 @@ from app.models import (
     LearningStep,
     MasteryEvent,
     RemediationBranch,
+    RoadmapProposal,
     utc_now,
 )
 from app.retrieval.hybrid import evidence_id_for_chunk
@@ -62,7 +72,11 @@ from app.schemas import (
     MasteryOverviewResponse,
     RemediationBranchResponse,
     RemediationCreate,
+    RoadmapApplyResponse,
+    RoadmapProposalCreate,
+    RoadmapProposalResponse,
 )
+from app.services.learning_actions import apply_learning_action as apply_learning_action_service
 from app.services.usage import UsageContext, UsageService
 
 router = APIRouter(tags=["adaptive-learning"])
@@ -214,6 +228,107 @@ def replan_learning_path(session_id: str, db: SessionDep):
     )
 
 
+@router.post(
+    "/learning-sessions/{session_id}/roadmap-proposals",
+    response_model=RoadmapProposalResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def propose_learning_roadmap(
+    session_id: str,
+    payload: RoadmapProposalCreate,
+    db: SessionDep,
+):
+    try:
+        proposal = create_roadmap_proposal(
+            db,
+            session_id=session_id,
+            focus_concept_ids=payload.focus_concept_ids,
+            max_lessons=payload.max_lessons,
+            selected_candidate_ids=payload.selected_candidate_ids,
+        )
+        db.commit()
+        db.refresh(proposal)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _roadmap_proposal_response(proposal)
+
+
+@router.get(
+    "/roadmap-proposals/{proposal_id}",
+    response_model=RoadmapProposalResponse,
+)
+def read_roadmap_proposal(proposal_id: str, db: SessionDep):
+    try:
+        return _roadmap_proposal_response(get_roadmap_proposal(db, proposal_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post(
+    "/roadmap-proposals/{proposal_id}/apply",
+    response_model=RoadmapApplyResponse,
+)
+def approve_roadmap_proposal(proposal_id: str, db: SessionDep):
+    try:
+        result = apply_roadmap_proposal(db, proposal_id=proposal_id)
+        db.expire_all()
+        proposal = get_roadmap_proposal(db, proposal_id)
+        learning_session = _load_learning_session(db, proposal.learning_session_id)
+        path = _load_path(db, result.path_id)
+        completed = set(learning_session.completed_lesson_ids or [])
+        next_item = next(
+            (
+                (module, lesson)
+                for module, lesson in _ordered_lessons(path)
+                if lesson.id not in completed
+            ),
+            None,
+        )
+        if next_item is not None:
+            module, lesson = next_item
+            step = lesson.steps[0] if lesson.steps else None
+            _move_to_lesson(db, learning_session, module, lesson, step)
+            learning_session.status = "active"
+        else:
+            learning_session.status = "completed"
+        _sync_chat_session(db, learning_session)
+        db.commit()
+        db.expire_all()
+    except RoadmapConflict as exc:
+        db.commit()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    proposal = get_roadmap_proposal(db, proposal_id)
+    return RoadmapApplyResponse(
+        proposal=_roadmap_proposal_response(proposal),
+        path=_path_response(db, result.path_id),
+        session=_session_response(
+            db,
+            _load_learning_session(db, proposal.learning_session_id),
+        ),
+        preserved_lesson_ids=result.preserved_lesson_ids,
+        revision=result.revision,
+    )
+
+
+@router.post(
+    "/roadmap-proposals/{proposal_id}/reject",
+    response_model=RoadmapProposalResponse,
+)
+def decline_roadmap_proposal(proposal_id: str, db: SessionDep):
+    try:
+        proposal = reject_roadmap_proposal(db, proposal_id=proposal_id)
+        db.commit()
+        db.refresh(proposal)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _roadmap_proposal_response(proposal)
+
+
 @router.patch(
     "/learning-sessions/{session_id}/selection",
     response_model=LearningSessionResponse,
@@ -241,71 +356,19 @@ def record_lesson_feedback(
     payload: LearningLessonFeedbackCreate,
     db: SessionDep,
 ):
-    learning_session = _load_learning_session(db, session_id)
-    path = _load_path(db, learning_session.path_id)
-    ordered = _ordered_lessons(path)
-    match = next(((module, lesson) for module, lesson in ordered if lesson.id == lesson_id), None)
-    if match is None:
-        raise HTTPException(status_code=409, detail="Lesson is not part of this learning path")
-    module, lesson = match
-    step = lesson.steps[0] if lesson.steps else None
-
-    if payload.event_type in {"opened", "needs_help"}:
-        _move_to_lesson(db, learning_session, module, lesson, step)
-    if payload.event_type in {"understood", "skip"}:
-        completed = list(learning_session.completed_lesson_ids or [])
-        if lesson.id not in completed:
-            completed.append(lesson.id)
-        learning_session.completed_lesson_ids = completed
-        if payload.event_type == "understood":
-            apply_mastery_event(
-                db,
-                profile=learning_session.profile,
-                learning_session_id=learning_session.id,
-                concept_ids=list(lesson.required_concept_ids or []),
-                event_type="lesson_understood",
-                source_type="lesson_feedback",
-                source_id=lesson.id,
-                score_delta=0.08,
-                confidence_delta=0.08,
-                evidence={"evidence_ids": list(lesson.evidence_ids or [])},
-            )
-        next_item = _next_unfinished(ordered, lesson.id, set(completed))
-        if next_item is None:
-            learning_session.status = "completed"
-        else:
-            next_module, next_lesson = next_item
-            next_step = next_lesson.steps[0] if next_lesson.steps else None
-            _move_to_lesson(db, learning_session, next_module, next_lesson, next_step)
-    elif payload.event_type == "needs_help":
-        apply_mastery_event(
+    try:
+        apply_learning_action_service(
             db,
-            profile=learning_session.profile,
-            learning_session_id=learning_session.id,
-            concept_ids=list(lesson.required_concept_ids or []),
-            event_type="lesson_needs_help",
-            source_type="lesson_feedback",
-            source_id=lesson.id,
-            score_delta=-0.06,
-            confidence_delta=0.08,
-            evidence={"evidence_ids": list(lesson.evidence_ids or [])},
+            session_id=session_id,
+            lesson_id=lesson_id,
+            action=payload.event_type,
+            source="rest",
         )
-        learning_session.teaching_state = {
-            **(learning_session.teaching_state or {}),
-            "help_requested": True,
-        }
-
-    db.add(
-        JourneyEvent(
-            learning_session_id=learning_session.id,
-            event_type=payload.event_type,
-            module_id=module.id,
-            lesson_id=lesson.id,
-            step_id=step.id if step else None,
-        )
-    )
-    _sync_chat_session(db, learning_session)
-    db.commit()
+        db.commit()
+        learning_session = _load_learning_session(db, session_id)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _session_response(db, learning_session)
 
 
@@ -325,7 +388,20 @@ def create_learning_activity(session_id: str, step_id: str, db: SessionDep):
     if path_id != learning_session.path_id:
         raise HTTPException(status_code=409, detail="Step is not part of this session")
     try:
-        activity, _, _ = ensure_learning_activity(db, step_id=step_id)
+        previous_attempt = db.scalar(
+            select(ActivityAttempt)
+            .where(ActivityAttempt.learning_session_id == learning_session.id)
+            .order_by(ActivityAttempt.created_at.desc())
+            .limit(1)
+        )
+        activity, _, _ = ensure_learning_activity(
+            db,
+            step_id=step_id,
+            mastery=learning_session.profile.concept_mastery or {},
+            last_attempt_correct=(
+                previous_attempt.is_correct if previous_attempt is not None else None
+            ),
+        )
         latest = db.scalar(
             select(ActivityAttempt)
             .where(
@@ -353,6 +429,8 @@ def submit_activity_attempt(
     payload: ActivityAttemptCreate,
     db: SessionDep,
 ):
+    started = perf_counter()
+    trace_id = current_trace_id()
     learning_session = _load_learning_session(db, session_id)
     activity = db.scalar(
         select(LearningActivity)
@@ -391,6 +469,7 @@ def submit_activity_attempt(
         is_correct=is_correct,
         score_delta=score_delta,
         feedback=feedback,
+        trace_id=trace_id,
     )
     db.add(attempt)
     db.flush()
@@ -420,6 +499,7 @@ def submit_activity_attempt(
             },
         )
     )
+    attempt.latency_ms = round((perf_counter() - started) * 1_000)
     db.commit()
     return ActivityAttemptResponse(
         id=attempt.id,
@@ -432,6 +512,8 @@ def submit_activity_attempt(
         feedback=attempt.feedback,
         evidence=_activity_citation(activity),
         mastery_updates=[item.payload() for item in updates],
+        trace_id=attempt.trace_id,
+        latency_ms=attempt.latency_ms,
         created_at=attempt.created_at,
     )
 
@@ -575,6 +657,9 @@ def get_learning_sources(
             recommendation_reason=(
                 f"현재 학습 단계의 {source.concept_id.replace('_', ' ')} 개념을 보충합니다."
             ),
+            verified_at=source.verified_at,
+            last_checked_at=source.last_checked_at,
+            freshness_status=source.freshness_status,
         )
         for source in sources
     ]
@@ -670,6 +755,24 @@ def create_remediation(session_id: str, payload: RemediationCreate, db: SessionD
     return _branch_response(branch)
 
 
+@router.get(
+    "/learning-sessions/{session_id}/remediation/active",
+    response_model=RemediationBranchResponse | None,
+)
+def get_active_remediation(session_id: str, db: SessionDep):
+    learning_session = _load_learning_session(db, session_id)
+    branch = db.scalar(
+        select(RemediationBranch)
+        .where(
+            RemediationBranch.learning_session_id == learning_session.id,
+            RemediationBranch.status == "active",
+        )
+        .order_by(RemediationBranch.created_at.desc())
+        .limit(1)
+    )
+    return _branch_response(branch) if branch is not None else None
+
+
 @router.post(
     "/remediation-branches/{branch_id}/complete",
     response_model=RemediationBranchResponse,
@@ -731,6 +834,25 @@ def _load_learning_session(db: Session, session_id: str) -> LearningSession:
     if learning_session is None:
         raise HTTPException(status_code=404, detail="Learning session not found")
     return learning_session
+
+
+def _roadmap_proposal_response(proposal: RoadmapProposal) -> RoadmapProposalResponse:
+    return RoadmapProposalResponse(
+        id=proposal.id,
+        learning_session_id=proposal.learning_session_id,
+        path_id=proposal.path_id,
+        base_revision=proposal.base_revision,
+        status=proposal.status,
+        request=proposal.request_json or {},
+        candidates=proposal.candidates_json or [],
+        selected_candidate_ids=proposal.selection_json or [],
+        diff=proposal.diff_json or {},
+        verification=proposal.verification_json or {},
+        failure_reason=proposal.failure_reason,
+        created_at=proposal.created_at,
+        applied_at=proposal.applied_at,
+        rejected_at=proposal.rejected_at,
+    )
 
 
 def _path_response(db: Session, path_id: str) -> LearningPathResponse:
@@ -1028,6 +1150,9 @@ def _source_dict(source) -> dict:
         "difficulty": source.difficulty,
         "language": source.language,
         "estimated_minutes": source.estimated_minutes,
+        "verified_at": source.verified_at.isoformat(),
+        "last_checked_at": (source.last_checked_at.isoformat() if source.last_checked_at else None),
+        "freshness_status": source.freshness_status,
     }
 
 
@@ -1038,6 +1163,7 @@ def _activity_response(
         id=activity.id,
         step_id=activity.step_id,
         activity_type=activity.activity_type,
+        difficulty=activity.difficulty,
         prompt=activity.prompt,
         choices=list(activity.choices or []),
         concept_ids=list(activity.concept_ids or []),

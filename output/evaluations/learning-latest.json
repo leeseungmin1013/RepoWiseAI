@@ -1,0 +1,30 @@
+{
+  "fixture": "RepoWiseAI grounded learning quality v1",
+  "repository": "leeseungmin1013/RepoWiseAI",
+  "curriculum_module_coverage": 1.0,
+  "lesson_evidence_coverage": 1.0,
+  "activity_type_coverage": 0.5,
+  "activity_evidence_validity": 1.0,
+  "statement_span_validity": 1.0,
+  "source_policy_precision": 1.0,
+  "source_concept_coverage": 0.75,
+  "learning_context_retrieval_coverage": 1.0,
+  "counts": {
+    "modules": 6,
+    "lessons": 28,
+    "activities": 55,
+    "statement_segments": 1368,
+    "sources": 4,
+    "learning_retrievals": 1
+  },
+  "failed_thresholds": [],
+  "passed": true,
+  "snapshot_id": "snap_12c517a4f4cc4a098489e323ad2266d2",
+  "commit_sha": "352f02f4eee29802d44f192ea1237f35fc737e95",
+  "learning_path_id": "lpath_aac96ffa8caf44ba8b345e3919f8d782",
+  "path_version": "adaptive-curriculum-v1",
+  "materialized": {
+    "activities": 0,
+    "explanations": 0
+  }
+}

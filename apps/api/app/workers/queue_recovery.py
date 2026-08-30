@@ -4,18 +4,20 @@ import json
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import or_, select, text
+from sqlalchemy import func, or_, select, text
 
 from app.core.config import get_settings
 from app.core.db import SessionLocal
 from app.core.logging import configure_logging
 from app.models import AnalysisJob, DeepTask, RepositorySnapshot
 from app.queue import (
+    cancel_repository_analysis_job,
     enqueue_deep_task,
     enqueue_repository_analysis,
     get_analysis_queue,
     get_deep_task_queue,
 )
+from app.services.usage import UsageService
 
 logger = logging.getLogger(__name__)
 _QUEUE_RECOVERY_LOCK_ID = 1_380_275_024
@@ -69,7 +71,14 @@ def recover_queue_jobs(*, now: datetime | None = None) -> dict[str, object]:
                             (
                                 (AnalysisJob.status == "running")
                                 & (AnalysisJob.started_at.is_not(None))
-                                & (AnalysisJob.started_at < analysis_stale_before)
+                                & (
+                                    func.coalesce(
+                                        AnalysisJob.last_progress_at,
+                                        AnalysisJob.heartbeat_at,
+                                        AnalysisJob.started_at,
+                                    )
+                                    < analysis_stale_before
+                                )
                             ),
                         )
                     )
@@ -81,9 +90,27 @@ def recover_queue_jobs(*, now: datetime | None = None) -> dict[str, object]:
             analysis_queue = get_analysis_queue() if analysis_jobs else None
             for job in analysis_jobs:
                 if job.status == "running":
+                    if job.retry_count >= settings.analysis_max_retries:
+                        job.status = "failed"
+                        job.error_code = "analysis_retry_exhausted"
+                        job.error_detail = "Analysis stopped making progress after retry limit."
+                        job.finished_at = current_time
+                        snapshot = db.get(RepositorySnapshot, job.snapshot_id)
+                        if snapshot is not None:
+                            snapshot.status = "failed"
+                            snapshot.error_message = job.error_detail
+                        UsageService(settings).release(
+                            db, job.cost_reservation_id, commit=False
+                        )
+                        continue
+                    cancel_repository_analysis_job(
+                        job.snapshot_id, attempt=job.retry_count
+                    )
                     job.status = "queued"
                     job.stage = "pending"
                     job.started_at = None
+                    job.heartbeat_at = None
+                    job.last_progress_at = current_time
                     job.finished_at = None
                     job.retry_count += 1
                     job.error_code = None
@@ -96,7 +123,10 @@ def recover_queue_jobs(*, now: datetime | None = None) -> dict[str, object]:
                         summary["analysis_stale_reset"]
                     ) + 1
                 enqueue_repository_analysis(
-                    job.snapshot_id, queue=analysis_queue
+                    job.snapshot_id,
+                    queue=analysis_queue,
+                    trace_id=job.trace_id,
+                    attempt=job.retry_count,
                 )
                 summary["analysis_requeued"] = int(summary["analysis_requeued"]) + 1
 
@@ -128,7 +158,9 @@ def recover_queue_jobs(*, now: datetime | None = None) -> dict[str, object]:
                     task.error_code = None
                     task.error_detail = None
                     summary["deep_stale_reset"] = int(summary["deep_stale_reset"]) + 1
-                task.rq_job_id = enqueue_deep_task(task.id, queue=deep_queue)
+                task.rq_job_id = enqueue_deep_task(
+                    task.id, queue=deep_queue, trace_id=task.trace_id
+                )
                 summary["deep_requeued"] = int(summary["deep_requeued"]) + 1
 
             db.commit()

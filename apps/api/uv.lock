@@ -747,6 +747,7 @@ dependencies = [
     { name = "tree-sitter" },
     { name = "tree-sitter-typescript" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "websockets" },
 ]
 
 [package.dev-dependencies]
@@ -774,6 +775,7 @@ requires-dist = [
     { name = "tree-sitter", specifier = "==0.25.2" },
     { name = "tree-sitter-typescript", specifier = ">=0.23.2" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.51.0" },
+    { name = "websockets", specifier = ">=16.0" },
 ]
 
 [package.metadata.requires-dev]

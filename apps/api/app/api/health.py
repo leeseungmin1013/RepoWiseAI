@@ -1,7 +1,10 @@
+from datetime import UTC, datetime
+
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from fastapi import APIRouter, Response, status
 from redis import Redis
+from rq import Worker
 from sqlalchemy import text
 
 from app.core.config import API_ROOT, get_settings
@@ -48,21 +51,49 @@ def readiness(response: Response) -> dict[str, object]:
         checks["database"] = "unavailable"
         checks["migration"] = "incompatible"
 
+    connection = None
     try:
-        Redis.from_url(
+        connection = Redis.from_url(
             settings.redis_url,
             socket_connect_timeout=settings.healthcheck_timeout_seconds,
             socket_timeout=settings.healthcheck_timeout_seconds,
-        ).ping()
+        )
+        connection.ping()
         checks["queue"] = "ready"
     except Exception:
         checks["queue"] = "unavailable"
 
-    ready = all(value == "ready" for value in checks.values())
-    if not ready:
+    if connection is not None and checks["queue"] == "ready":
+        try:
+            now = datetime.now(UTC)
+            active = []
+            for worker in Worker.all(connection=connection):
+                queue_names = set(worker.queue_names())
+                heartbeat = worker.last_heartbeat
+                if heartbeat is None or settings.queue_name not in queue_names:
+                    continue
+                if heartbeat.tzinfo is None:
+                    heartbeat = heartbeat.replace(tzinfo=UTC)
+                age = (now - heartbeat).total_seconds()
+                if age <= settings.worker_heartbeat_stale_seconds:
+                    active.append(worker)
+            checks["worker"] = "ready" if active else "unavailable"
+        except Exception:
+            checks["worker"] = "unavailable"
+    else:
+        checks["worker"] = "unavailable"
+
+    core_ready = all(checks.get(name) == "ready" for name in ("database", "migration", "queue"))
+    if not core_ready:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     return {
-        "status": "ready" if ready else "unavailable",
+        "status": (
+            "unavailable"
+            if not core_ready
+            else "ready"
+            if checks["worker"] == "ready"
+            else "degraded"
+        ),
         **_identity(),
         "checks": checks,
     }

@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from app.ai.gateway import MeteredOpenAIClient
 from app.core.config import Settings
+from app.core.model_routing import ModelRoutingPolicy
 from app.schemas import ResearchMaterialsResponse, ResearchSourceResponse
 
 
@@ -87,10 +88,11 @@ def research_official_materials(
     if not allowed_domains:
         raise RuntimeError("No official research domains are configured")
 
+    route = ModelRoutingPolicy.from_settings(settings).for_role("research")
     client = MeteredOpenAIClient(settings.openai_api_key, recorder=recorder)
     response = client.responses_parse(
-        model=settings.research_model,
-        reasoning={"effort": settings.research_reasoning_effort},
+        model=route.model,
+        reasoning={"effort": route.reasoning_effort},
         background=False,
         store=False,
         tools=[
@@ -148,5 +150,5 @@ def research_official_materials(
         answer=payload.answer.strip(),
         voice_summary=payload.voice_summary.strip() if payload.voice_summary else None,
         sources=verified,
-        model_name=settings.research_model,
+        model_name=route.model,
     )

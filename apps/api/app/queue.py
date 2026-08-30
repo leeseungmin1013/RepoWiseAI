@@ -1,4 +1,5 @@
 from redis import Redis
+from redis.exceptions import RedisError
 from rq import Queue
 from rq.command import send_stop_job_command
 from rq.exceptions import DuplicateJobError, InvalidJobOperation, NoSuchJobError
@@ -14,15 +15,25 @@ def get_analysis_queue() -> Queue:
     return Queue(settings.queue_name, connection=connection)
 
 
-def enqueue_repository_analysis(snapshot_id: str, *, queue: Queue | None = None) -> str:
+def enqueue_repository_analysis(
+    snapshot_id: str,
+    *,
+    queue: Queue | None = None,
+    trace_id: str | None = None,
+    attempt: int = 0,
+) -> str:
     settings = get_settings()
     job_id = f"repository-analysis-{snapshot_id}"
+    if attempt > 0:
+        job_id = f"{job_id}-attempt-{attempt}"
     context = current_log_context()
     metadata = {
         key: context[key]
-        for key in ("request_id", "organization_id")
+        for key in ("request_id", "trace_id", "organization_id")
         if key in context
     }
+    if trace_id:
+        metadata["trace_id"] = trace_id
     try:
         job = (queue or get_analysis_queue()).enqueue(
             "app.workers.repository_analysis.analyze_repository",
@@ -39,20 +50,41 @@ def enqueue_repository_analysis(snapshot_id: str, *, queue: Queue | None = None)
     return job.id
 
 
+def cancel_repository_analysis_job(snapshot_id: str, *, attempt: int = 0) -> bool:
+    queue = get_analysis_queue()
+    job_id = f"repository-analysis-{snapshot_id}"
+    if attempt > 0:
+        job_id = f"{job_id}-attempt-{attempt}"
+    try:
+        job = Job.fetch(job_id, connection=queue.connection)
+        job_status = job.get_status(refresh=True)
+        if job_status == JobStatus.STARTED:
+            send_stop_job_command(queue.connection, job_id)
+        elif job_status not in {JobStatus.FINISHED, JobStatus.FAILED, JobStatus.CANCELED}:
+            job.cancel(enqueue_dependents=False)
+        return True
+    except (NoSuchJobError, InvalidJobOperation, RedisError):
+        return False
+
+
 def get_deep_task_queue() -> Queue:
     settings = get_settings()
     connection = Redis.from_url(settings.redis_url)
     return Queue(settings.deep_queue_name, connection=connection)
 
 
-def enqueue_deep_task(task_id: str, *, queue: Queue | None = None) -> str:
+def enqueue_deep_task(
+    task_id: str, *, queue: Queue | None = None, trace_id: str | None = None
+) -> str:
     settings = get_settings()
     context = current_log_context()
     metadata = {
         key: context[key]
-        for key in ("request_id", "organization_id")
+        for key in ("request_id", "trace_id", "organization_id")
         if key in context
     }
+    if trace_id:
+        metadata["trace_id"] = trace_id
     try:
         job = (queue or get_deep_task_queue()).enqueue(
             "app.workers.deep_tasks.run_deep_task",

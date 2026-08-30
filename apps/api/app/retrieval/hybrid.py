@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.ai.embeddings import EmbeddingUnavailable, build_embedder
 from app.core.config import Settings
+from app.core.logging import current_trace_id
 from app.models import (
     CodeChunk,
     FileRecord,
@@ -143,6 +144,7 @@ class HybridRetriever:
             session_id=session_id,
             message_id=message_id,
             query_text=query,
+            trace_id=current_trace_id(),
             resolved_context=selection or {},
             intent=analysis.intent,
             retrieval_plan=plan,

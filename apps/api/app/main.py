@@ -1,5 +1,6 @@
+import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from time import monotonic
 from uuid import uuid4
 
@@ -10,9 +11,26 @@ from fastapi.responses import JSONResponse
 from app.api.router import api_router
 from app.core.config import get_settings
 from app.core.logging import bind_log_context, configure_logging, reset_log_context
+from app.workers.queue_recovery import recover_queue_jobs
 
 configure_logging()
 logger = logging.getLogger(__name__)
+
+
+async def periodic_queue_recovery(interval_seconds: int) -> None:
+    while True:
+        await asyncio.sleep(max(1, interval_seconds))
+        try:
+            summary = await asyncio.to_thread(recover_queue_jobs)
+            logger.info(
+                "queue_recovery_periodic",
+                extra={"outcome": summary["outcome"]},
+            )
+        except Exception:
+            logger.exception(
+                "queue_recovery_periodic_failed",
+                extra={"error_code": "queue_recovery_failed", "outcome": "failed"},
+            )
 
 
 @asynccontextmanager
@@ -20,8 +38,16 @@ async def lifespan(_: FastAPI):
     settings = get_settings()
     settings.analysis_workspace.mkdir(parents=True, exist_ok=True)
     logger.info("service_started", extra={"outcome": "ready"})
-    yield
-    logger.info("service_stopped", extra={"outcome": "stopped"})
+    recovery_task = asyncio.create_task(
+        periodic_queue_recovery(settings.queue_recovery_interval_seconds)
+    )
+    try:
+        yield
+    finally:
+        recovery_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await recovery_task
+        logger.info("service_stopped", extra={"outcome": "stopped"})
 
 
 settings = get_settings()
@@ -44,6 +70,7 @@ app.add_middleware(
         "X-Generation-Cache",
         "X-Quota-Remaining",
         "X-Realtime-Max-Duration",
+        "X-RepoWise-Voice-Session-Id",
     ],
 )
 app.include_router(api_router, prefix=settings.api_prefix)
@@ -55,7 +82,7 @@ async def request_context(request: Request, call_next):
     request_id = supplied_request_id[:128] if supplied_request_id.isprintable() else ""
     request_id = request_id or str(uuid4())
     request.state.request_id = request_id
-    token = bind_log_context(request_id=request_id)
+    token = bind_log_context(request_id=request_id, trace_id=request_id)
     started = monotonic()
     try:
         response = await call_next(request)

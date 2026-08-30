@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
+import pytest
 from fastapi import Response
 
 from app import queue
@@ -60,6 +62,7 @@ def test_readiness_returns_503_when_a_dependency_is_unavailable(monkeypatch):
         "database": "unavailable",
         "migration": "incompatible",
         "queue": "unavailable",
+        "worker": "unavailable",
     }
 
 
@@ -95,13 +98,33 @@ def test_enqueue_propagates_request_metadata(monkeypatch):
             return SimpleNamespace(id=kwargs["job_id"])
 
     monkeypatch.setattr(queue, "get_analysis_queue", QueueStub)
-    token = bind_log_context(request_id="request-1", organization_id="org-1")
+    token = bind_log_context(request_id="request-1", trace_id="request-1", organization_id="org-1")
     try:
         queue.enqueue_repository_analysis("snap-1")
     finally:
         reset_log_context(token)
 
-    assert captured["meta"] == {"request_id": "request-1", "organization_id": "org-1"}
+    assert captured["meta"] == {
+        "request_id": "request-1",
+        "trace_id": "request-1",
+        "organization_id": "org-1",
+    }
+
+
+def test_analysis_retry_uses_a_new_deterministic_rq_job_id(monkeypatch):
+    captured = {}
+
+    class QueueStub:
+        def enqueue(self, *_args, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(id=kwargs["job_id"])
+
+    monkeypatch.setattr(queue, "get_analysis_queue", QueueStub)
+
+    job_id = queue.enqueue_repository_analysis("snap-1", attempt=2)
+
+    assert job_id == "repository-analysis-snap-1-attempt-2"
+    assert captured["job_id"] == job_id
 
 
 def test_worker_subscribes_deep_queue_before_analysis(monkeypatch):
@@ -165,14 +188,51 @@ def test_maintenance_uses_lock_and_commits_once(monkeypatch):
 
     monkeypatch.setattr(maintenance, "SessionLocal", SessionStub)
     monkeypatch.setattr(maintenance, "UsageService", UsageStub)
+    monkeypatch.setattr(maintenance, "ensure_knowledge_sources", lambda _db: None)
+    monkeypatch.setattr(
+        maintenance,
+        "refresh_knowledge_sources",
+        lambda _db: {"checked": 1, "verified": 1, "unavailable": 0, "skipped_fresh": 0},
+    )
 
     summary = maintenance.run_maintenance()
 
     assert summary["semantic_cache_deleted"] == 3
     assert summary["stale_reservations_released"] == 2
+    assert summary["voice_transcripts_expired"] == 3
+    assert summary["learning_sources"]["verified"] == 1
     assert summary["outcome"] == "success"
     assert calls.count("commit") == 1
     assert "rollback" not in calls
+
+
+def test_voice_transcript_retention_expires_content_but_preserves_turn(monkeypatch):
+    captured = {}
+
+    class Db:
+        def execute(self, statement):
+            captured["sql"] = str(statement)
+            captured["params"] = statement.compile().params
+            return _Result(rowcount=4)
+
+    expired = maintenance.expire_voice_transcripts(
+        Db(),
+        retention_days=30,
+        now=datetime(2026, 8, 30, tzinfo=UTC),
+    )
+
+    assert expired == 4
+    assert "UPDATE voice_turns" in captured["sql"]
+    assert captured["params"]["transcript"] is None
+    assert captured["params"]["transcript_status"] == "expired"
+
+
+def test_voice_transcript_retention_setting_is_bounded():
+    assert Settings(voice_transcript_retention_days=1).voice_transcript_retention_days == 1
+    with pytest.raises(ValueError):
+        Settings(voice_transcript_retention_days=0)
+    with pytest.raises(ValueError):
+        Settings(voice_transcript_retention_days=3651)
 
 
 def test_maintenance_main_returns_nonzero_on_error(monkeypatch):
@@ -183,7 +243,6 @@ def test_maintenance_main_returns_nonzero_on_error(monkeypatch):
     )
 
     assert maintenance.main() == 1
-
 
 
 def test_abandoned_deep_job_is_failed_and_reservation_released(monkeypatch):

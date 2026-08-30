@@ -1,0 +1,37 @@
+{
+  "name": "RepoWiseAI grounded learning quality v1",
+  "repository": "leeseungmin1013/RepoWiseAI",
+  "required_module_types": [
+    "orientation",
+    "foundations",
+    "architecture",
+    "feature_flow",
+    "data_failure",
+    "test_apply"
+  ],
+  "required_activity_types": [
+    "trace_value",
+    "select_error_path",
+    "predict_next_call",
+    "identify_direct_impact"
+  ],
+  "allowed_source_domains": [
+    "developer.mozilla.org",
+    "typescriptlang.org",
+    "react.dev",
+    "nextjs.org",
+    "docs.python.org",
+    "fastapi.tiangolo.com",
+    "docs.sqlalchemy.org"
+  ],
+  "thresholds": {
+    "curriculum_module_coverage": 0.8,
+    "lesson_evidence_coverage": 0.95,
+    "activity_type_coverage": 0.5,
+    "activity_evidence_validity": 1.0,
+    "statement_span_validity": 0.95,
+    "source_policy_precision": 1.0,
+    "source_concept_coverage": 0.5,
+    "learning_context_retrieval_coverage": 0.95
+  }
+}

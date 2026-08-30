@@ -22,6 +22,8 @@ dist/
 supabase/.temp/
 build/
 coverage/
+playwright-report/
+test-results/
 pnpm-debug.log*
 
 # Local analysis data

@@ -137,4 +137,32 @@ describe("DeepTaskTray", () => {
     expect(screen.getByText("약 30분")).toBeTruthy();
     expect(screen.getByText("입문")).toBeTruthy();
   });
-});
+
+  it("shows a support trace for a failed task", () => {
+    render(
+      <DeepTaskTray
+        error={null}
+        isCancelling={false}
+        isStarting={false}
+        onCancel={vi.fn()}
+        onDismiss={vi.fn()}
+        task={{
+          id: "deep_failed",
+          status: "failed",
+          kind: "deep_explanation",
+          progress: 100,
+          message: "심층 작업을 완료하지 못했습니다.",
+          trace_id: "request-support-123",
+          error: {
+            code: "worker_terminated",
+            message: "작업 처리 중 연결이 종료되었습니다.",
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByRole("alert").textContent).toContain(
+      "작업 처리 중 연결이 종료되었습니다.",
+    );
+    expect(screen.getByText("지원 ID: request-support-123")).toBeTruthy();
+  });});

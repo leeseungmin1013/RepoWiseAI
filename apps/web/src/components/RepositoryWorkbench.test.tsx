@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
   health: vi.fn(),
   listSnapshots: vi.fn(),
   createRepository: vi.fn(),
+  getSnapshot: vi.fn(),
+  retrySnapshot: vi.fn(),
   createLearnerProfile: vi.fn(),
   getProjectMap: vi.fn(),
   getArchitectureGraph: vi.fn(),
@@ -25,11 +27,16 @@ const mocks = vi.hoisted(() => ({
   createLearningPath: vi.fn(),
 }));
 
+vi.mock("./AuthUserMenu", () => ({
+  AuthUserMenu: () => <div data-testid="auth-user-menu" />,
+}));
 vi.mock("@/lib/api", () => ({
   api: {
     health: mocks.health,
     listSnapshots: mocks.listSnapshots,
     createRepository: mocks.createRepository,
+    getSnapshot: mocks.getSnapshot,
+    retrySnapshot: mocks.retrySnapshot,
     createLearnerProfile: mocks.createLearnerProfile,
     getProjectMap: mocks.getProjectMap,
     getArchitectureGraph: mocks.getArchitectureGraph,
@@ -331,8 +338,10 @@ const assessment = {
   assessment_version: "stack-diagnostic-v1",
   profile,
   created_at: "2026-07-19T00:00:00Z",
+  expires_at: "2026-07-19T00:15:00Z",
   submitted_at: null,
   skipped_at: null,
+  timed_out_at: null,
 };
 
 const featureFlowCatalog = {
@@ -546,6 +555,55 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("RepositoryWorkbench map-first entry", () => {
+  it("stops polling a stalled analysis and retries it with a new server job", async () => {
+    const stalledSnapshot = {
+      ...snapshot,
+      status: "analyzing",
+      job: {
+        id: "job-stalled",
+        snapshot_id: snapshot.id,
+        stage: "embedding",
+        status: "running",
+        progress_current: 2,
+        progress_total: 10,
+        error_code: null,
+        error_detail: null,
+        retry_count: 0,
+        runtime_state: "stalled",
+        stalled_reason: "progress_timeout",
+        created_at: "2026-07-19T00:00:00Z",
+        started_at: "2026-07-19T00:00:00Z",
+        heartbeat_at: "2026-07-19T00:01:00Z",
+        last_progress_at: "2026-07-19T00:01:00Z",
+        finished_at: null,
+      },
+    };
+    const retriedSnapshot = {
+      ...stalledSnapshot,
+      status: "pending",
+      job: {
+        ...stalledSnapshot.job,
+        status: "queued",
+        stage: "pending",
+        retry_count: 1,
+        runtime_state: "queued",
+        stalled_reason: null,
+      },
+    };
+    mocks.listSnapshots.mockResolvedValueOnce([stalledSnapshot]);
+    mocks.retrySnapshot.mockResolvedValueOnce(retriedSnapshot);
+
+    render(<RepositoryWorkbench />);
+
+    expect(await screen.findByText("분석 정체")).toBeTruthy();
+    expect(screen.getByText(/분석 진행이 멈췄습니다/)).toBeTruthy();
+    expect(mocks.getSnapshot).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "분석 다시 시도" }));
+
+    await waitFor(() => expect(mocks.retrySnapshot).toHaveBeenCalledWith(snapshot.id));
+    expect(await screen.findByText("대기 중")).toBeTruthy();
+  });
+
   it("loads Repository Structure without starting assessment or explorer APIs", async () => {
     render(<RepositoryWorkbench />);
 

@@ -39,6 +39,12 @@ def current_log_context() -> dict[str, Any]:
     return dict(_context.get() or {})
 
 
+def current_trace_id() -> str | None:
+    context = current_log_context()
+    value = context.get("trace_id") or context.get("request_id")
+    return str(value) if value else None
+
+
 def redact(value: Any) -> Any:
     if not isinstance(value, str):
         return value
@@ -61,6 +67,7 @@ class JsonFormatter(logging.Formatter):
         }
         for field in (
             "request_id",
+            "trace_id",
             "organization_id",
             "job_id",
             "task_id",

@@ -1,7 +1,11 @@
 import hashlib
 from unittest.mock import MagicMock
 
-from app.learning.activities import CallCandidate, build_activity_spec
+from app.learning.activities import (
+    CallCandidate,
+    build_activity_spec,
+    select_activity_difficulty,
+)
 from app.learning.mastery import apply_mastery_event, apply_mastery_projection
 from app.models import CodeChunk, FileRecord, LearnerProfile, MasteryEvent
 
@@ -213,3 +217,80 @@ def test_assessment_projection_is_recorded_as_absolute_mastery_event():
     event = db.add.call_args.args[0]
     assert event.event_type == "assessment_result"
     assert event.source_id == "assessment_1"
+
+def test_activity_difficulty_adapts_to_mastery_and_previous_result():
+    mastery = {
+        "function": {"score": 0.8},
+        "return": {"score": 0.7},
+    }
+
+    assert select_activity_difficulty(["function", "return"], mastery) == "advanced"
+    assert (
+        select_activity_difficulty(
+            ["function", "return"],
+            mastery,
+            last_attempt_correct=False,
+        )
+        == "intermediate"
+    )
+    assert (
+        select_activity_difficulty(
+            ["function"],
+            {"function": {"score": 0.2}},
+            last_attempt_correct=True,
+        )
+        == "intermediate"
+    )
+
+
+def test_intermediate_activity_traces_actual_returned_value():
+    chunk, file = source_models(
+        """function run(input: number) {
+  const result = input + 1;
+  return result;
+}"""
+    )
+
+    spec = build_activity_spec(
+        chunk=chunk,
+        file=file,
+        concepts=["function", "return"],
+        other_paths=[],
+        symbol_names=["input", "result"],
+        difficulty="intermediate",
+    )
+
+    assert spec.activity_type == "trace_value"
+    assert correct_label(spec) == "result"
+    assert spec.evidence["start_line"] == 3
+
+
+def test_advanced_call_activity_asks_for_direct_impact():
+    chunk, file = source_models(
+        """function run() {
+  persist();
+}"""
+    )
+
+    spec = build_activity_spec(
+        chunk=chunk,
+        file=file,
+        concepts=["function"],
+        other_paths=[],
+        symbol_names=["persist"],
+        resolved_calls=[
+            CallCandidate(
+                target="PersistenceService",
+                start_line=2,
+                end_line=2,
+                source="persist();",
+                relation="CALLS",
+                confidence=0.95,
+            )
+        ],
+        difficulty="advanced",
+    )
+
+    assert spec.activity_type == "identify_direct_impact"
+    assert correct_label(spec) == "PersistenceService"
+    assert spec.evidence["relation"] == "CALLS"

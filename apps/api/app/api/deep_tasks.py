@@ -14,7 +14,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.db import SessionLocal, get_db
-from app.models import ChatSession, DeepTask, FileRecord, LearningSession
+from app.core.logging import current_trace_id
+from app.models import ChatSession, DeepTask, FileRecord
 from app.queue import cancel_deep_task_job, enqueue_deep_task
 from app.schemas import (
     ChangeBriefResponse,
@@ -23,6 +24,10 @@ from app.schemas import (
     DeepTaskErrorResponse,
     DeepTaskResponse,
     ResearchMaterialsResponse,
+)
+from app.services.deep_tasks import (
+    DeepTaskQueueUnavailable,
+    create_learning_deep_task,
 )
 from app.services.usage import UsageContext, UsageService
 
@@ -63,6 +68,7 @@ def _task_response(task: DeepTask) -> DeepTaskResponse:
         kind=task.kind,
         progress=task.progress,
         message=task.message,
+        trace_id=getattr(task, "trace_id", None),
         result=result,
         error=error,
     )
@@ -113,84 +119,33 @@ def create_deep_task(
     db: SessionDep,
     idempotency_key: IdempotencyKey,
 ):
-    learning_session = db.get(LearningSession, session_id)
-    if learning_session is None:
-        raise HTTPException(status_code=404, detail="Learning session not found")
-    idempotency_key = idempotency_key.strip()
-    if not idempotency_key or len(idempotency_key) > 200:
-        raise HTTPException(status_code=422, detail="Idempotency-Key is invalid")
-    existing = db.scalar(
-        select(DeepTask).where(
-            DeepTask.learning_session_id == learning_session.id,
-            DeepTask.idempotency_key == idempotency_key,
-        )
-    )
-    if existing is not None:
-        if existing.status == "queued" and not existing.rq_job_id:
-            _enqueue_task(db, existing)
-        return _task_response(existing)
-    chat_session = db.scalar(
-        select(ChatSession).where(ChatSession.learning_session_id == learning_session.id)
-    )
-    if chat_session is None:
-        raise HTTPException(status_code=409, detail="Learning session has no linked chat")
-
-    requested_selection = (
-        payload.selection.model_dump()
-        if payload.selection
-        else (learning_session.current_selection or chat_session.current_selection or {})
-    )
-    selection = _validated_selection(db, learning_session.snapshot_id, requested_selection)
-    task = DeepTask(
-        learning_session_id=learning_session.id,
-        user_id=getattr(chat_session, "user_id", None),
-        organization_id=getattr(chat_session, "organization_id", None),
-        chat_session_id=chat_session.id,
-        kind=payload.kind,
-        modality=payload.modality,
-        idempotency_key=idempotency_key,
-        prompt=payload.prompt.strip(),
-        selection=selection,
-        context_json={"scope": "learning"},
-        teaching_style=chat_session.preferred_style,
-        status="queued",
-        progress=0,
-        message="심층 작업이 대기열에 등록되었습니다.",
-    )
-    if getattr(task, "organization_id", None):
-        reservation = UsageService().reserve(
-            db,
-            context=UsageContext(
-                organization_id=getattr(task, "organization_id", None),
-                user_id=getattr(task, "user_id", None),
-                feature="research_web_search"
-                if task.kind == "research_materials"
-                else "deep_explanation",
-                request_id=task.id,
-                idempotency_key=f"deep-task:{task.id}",
-            ),
-            estimated_cost_micro_usd=get_settings().deep_task_reservation_micro_usd,
-        )
-        task.cost_reservation_id = reservation.id if reservation else None
-    db.add(task)
     try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        existing = db.scalar(
-            select(DeepTask).where(
-                DeepTask.learning_session_id == learning_session.id,
-                DeepTask.idempotency_key == idempotency_key,
-            )
+        task = create_learning_deep_task(
+            db,
+            session_id=session_id,
+            kind=payload.kind,
+            prompt=payload.prompt,
+            idempotency_key=idempotency_key,
+            modality=payload.modality,
+            requested_selection=(payload.selection.model_dump() if payload.selection else None),
+            enqueue=enqueue_deep_task,
         )
-        if existing is None:
-            raise
-        if existing.status == "queued" and not existing.rq_job_id:
-            _enqueue_task(db, existing)
-        return _task_response(existing)
-    db.refresh(task)
-
-    _enqueue_task(db, task)
+    except DeepTaskQueueUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        if str(exc) == "Learning session not found":
+            status_code = 404
+        elif str(exc) in {
+            "Idempotency-Key is invalid",
+            "Deep task prompt length is invalid",
+            "Deep task kind is invalid",
+            "Selected file is not in this snapshot",
+            "Selected line range is invalid",
+        }:
+            status_code = 422
+        else:
+            status_code = 409
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
     return _task_response(task)
 
 
@@ -265,6 +220,7 @@ def create_navigation_deep_task(
         status="queued",
         progress=0,
         message="변경 영향 분석이 대기열에 등록되었습니다.",
+        trace_id=current_trace_id(),
     )
     if getattr(task, "organization_id", None):
         reservation = UsageService().reserve(

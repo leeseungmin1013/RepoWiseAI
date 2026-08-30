@@ -43,6 +43,7 @@ import {
   type LearningModule,
   type LearningPath,
   type LearningSession,
+  type RoadmapProposal,
   type MasteryOverview,
   type ProjectMapEvidence,
   type RemediationBranch,
@@ -60,6 +61,7 @@ import { useDeepLearningTask } from "@/hooks/useDeepLearningTask";
 import { routeQuestionToDeepTask } from "@/lib/deep-tasks";
 
 import { AssistantPanel } from "./AssistantPanel";
+import { AuthUserMenu } from "./AuthUserMenu";
 import { ChangeBriefPanel } from "./ChangeBriefPanel";
 import { CodeFocusPanel } from "./CodeFocusPanel";
 import { CodePanel, type CodeHighlight } from "./CodePanel";
@@ -142,6 +144,7 @@ export function RepositoryWorkbench() {
   const [masteryLoading, setMasteryLoading] = useState(false);
   const [remediation, setRemediation] = useState<RemediationBranch | null>(null);
   const [journeyBusy, setJourneyBusy] = useState(false);
+  const [roadmapProposal, setRoadmapProposal] = useState<RoadmapProposal | null>(null);
   const [chatSessionId, setChatSessionId] = useState<string | null>(null);
   const [sessionTeachingStyle, setSessionTeachingStyle] = useState<TeachingStyle | null>(null);
   const [teachingStyle, setTeachingStyle] = useState<TeachingStyle>("beginner");
@@ -183,11 +186,16 @@ export function RepositoryWorkbench() {
       ? profile?.id ?? null
       : null;
   const exchangeVoiceSdp = useCallback(
-    (sdp: string, signal: AbortSignal) => {
+    (sdp: string, signal: AbortSignal, vadEnabled: boolean) => {
       if (!learningSession) {
         return Promise.reject(new Error("먼저 학습 세션을 시작해 주세요."));
       }
-      return api.exchangeVoiceOffer(learningSession.id, sdp, signal);
+      return api.exchangeVoiceOffer(
+        learningSession.id,
+        sdp,
+        signal,
+        vadEnabled,
+      );
     },
     [learningSession],
   );
@@ -197,6 +205,7 @@ export function RepositoryWorkbench() {
   const voiceSession = useRealtimeLearningSession({
     exchangeSdp: exchangeVoiceSdp,
     onFinalTranscript: handleFinalVoiceTranscript,
+    stopSession: api.stopVoiceSession,
   });
   const {
     isConnected: isVoiceConnected,
@@ -314,22 +323,49 @@ export function RepositoryWorkbench() {
     };
   }, []);
 
+  const polledSnapshotId =
+    snapshot &&
+    ["pending", "analyzing"].includes(snapshot.status) &&
+    snapshot.job?.runtime_state !== "stalled"
+      ? snapshot.id
+      : null;
+
   useEffect(() => {
-    if (!snapshot || !["pending", "analyzing"].includes(snapshot.status)) return;
-    const snapshotId = snapshot.id;
-    const interval = window.setInterval(() => {
-      api
-        .getSnapshot(snapshotId)
-        .then((nextSnapshot) => {
+    if (!polledSnapshotId) return;
+    const snapshotId = polledSnapshotId;
+    const startedAt = Date.now();
+    let cancelled = false;
+    let timer: number | null = null;
+    const poll = async () => {
+      try {
+        const nextSnapshot = await api.getSnapshot(snapshotId);
+        if (!cancelled) {
           setSnapshot(nextSnapshot);
           setSnapshots((current) =>
             current.map((item) => (item.id === nextSnapshot.id ? nextSnapshot : item)),
           );
-        })
-        .catch((reason: unknown) => setError(errorMessage(reason)));
-    }, 1_200);
-    return () => window.clearInterval(interval);
-  }, [snapshot]);
+        }
+        if (
+          nextSnapshot.status === "ready" ||
+          nextSnapshot.status === "failed" ||
+          nextSnapshot.job?.runtime_state === "stalled"
+        ) {
+          return;
+        }
+      } catch (reason) {
+        if (!cancelled) setError(errorMessage(reason));
+      }
+      if (cancelled) return;
+      const elapsed = Date.now() - startedAt;
+      const delay = elapsed >= 120_000 ? 10_000 : elapsed >= 30_000 ? 5_000 : 2_000;
+      timer = window.setTimeout(() => void poll(), delay);
+    };
+    timer = window.setTimeout(() => void poll(), 2_000);
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [polledSnapshotId]);
 
   useEffect(() => {
     if (
@@ -590,6 +626,12 @@ export function RepositoryWorkbench() {
         setLearningSession(nextSession);
         setChatSessionId(nextSession.chat_session_id);
         setSessionTeachingStyle(style);
+        const [recentAnswers, activeRemediation] = await Promise.all([
+          api.getChatAnswers(nextSession.chat_session_id),
+          api.getActiveRemediation(nextSession.id),
+        ]);
+        setAnswers(recentAnswers);
+        setRemediation(activeRemediation);
 
         const current = findCurrentLesson(nextPath, nextSession);
         const evidence = current?.lesson.steps[0]?.evidence;
@@ -683,6 +725,24 @@ export function RepositoryWorkbench() {
     }
   }
 
+  async function retryAnalysis() {
+    if (!snapshot || submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const nextSnapshot = await api.retrySnapshot(snapshot.id);
+      setSnapshot(nextSnapshot);
+      setSnapshots((current) =>
+        current.map((item) => (item.id === nextSnapshot.id ? nextSnapshot : item)),
+      );
+      setReuseNotice("정체된 분석을 새 작업으로 다시 시작했습니다.");
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   function resetRepositoryState() {
     resetDeepTask();
     resetChangeBrief();
@@ -721,6 +781,7 @@ export function RepositoryWorkbench() {
     setMasteryLoading(false);
     setRemediation(null);
     setJourneyBusy(false);
+    setRoadmapProposal(null);
     setChatSessionId(null);
     setSessionTeachingStyle(null);
     setAnswers([]);
@@ -1129,13 +1190,47 @@ export function RepositoryWorkbench() {
     setJourneyBusy(true);
     setError(null);
     try {
-      const result = await api.replanLearningSession(learningSession.id);
+      setRoadmapProposal(
+        await api.createRoadmapProposal(learningSession.id, {
+          focusConceptIds: learningSession.focus_concept_ids,
+        }),
+      );
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setJourneyBusy(false);
+    }
+  }
+
+  async function applyRoadmapProposal() {
+    if (!roadmapProposal || journeyBusy) return;
+    setJourneyBusy(true);
+    setError(null);
+    try {
+      const result = await api.applyRoadmapProposal(roadmapProposal.id);
       setLearningPath(result.path);
       setLearningSession(result.session);
+      setRoadmapProposal(null);
       setRemediation(null);
       const current = findCurrentLesson(result.path, result.session);
       const evidence = current?.lesson.steps[0]?.evidence;
       if (evidence) openEvidence(evidence);
+    } catch (reason) {
+      setError(errorMessage(reason));
+      const latest = await api.getRoadmapProposal(roadmapProposal.id).catch(() => null);
+      if (latest) setRoadmapProposal(latest);
+    } finally {
+      setJourneyBusy(false);
+    }
+  }
+
+  async function rejectRoadmapProposal() {
+    if (!roadmapProposal || journeyBusy) return;
+    setJourneyBusy(true);
+    setError(null);
+    try {
+      await api.rejectRoadmapProposal(roadmapProposal.id);
+      setRoadmapProposal(null);
     } catch (reason) {
       setError(errorMessage(reason));
     } finally {
@@ -1281,24 +1376,47 @@ export function RepositoryWorkbench() {
     [requestQuestion],
   );
 
-  const askVoiceQuestion = useCallback(
-    async (question: string) => {
-      const answer = await requestQuestion(question, "voice");
-      if (answer) {
-        speakVerifiedText(answerForVoice(answer));
+  const synchronizeVoiceTurn = useCallback(async () => {
+    const sessionId = learningSession?.chat_session_id ?? chatSessionId;
+    if (!sessionId || !learningSession) return;
+    const knownAnswerIds = new Set(answers.map((answer) => answer.id));
+    const baselineLessonId = learningSession.current_lesson_id;
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      if (attempt > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 750));
       }
-    },
-    [requestQuestion, speakVerifiedText],
-  );
+      try {
+        const [recentAnswers, refreshedSession] = await Promise.all([
+          api.listChatAnswers(sessionId),
+          api.getLearningSession(learningSession.id),
+        ]);
+        setAnswers((current) => {
+          const merged = new Map(current.map((answer) => [answer.id, answer]));
+          recentAnswers.forEach((answer) => merged.set(answer.id, answer));
+          return [...merged.values()];
+        });
+        setLearningSession(refreshedSession);
+        if (
+          recentAnswers.some((answer) => !knownAnswerIds.has(answer.id)) ||
+          refreshedSession.current_lesson_id !== baselineLessonId
+        ) {
+          return;
+        }
+      } catch {
+        // The sideband owns execution. A later poll or normal session restore
+        // will reconcile transient API failures without replaying the utterance.
+      }
+    }
+  }, [answers, chatSessionId, learningSession]);
 
   useEffect(() => {
-    voiceQuestionHandler.current = (transcript) => {
-      void askVoiceQuestion(transcript);
+    voiceQuestionHandler.current = () => {
+      void synchronizeVoiceTurn();
     };
     return () => {
       voiceQuestionHandler.current = () => undefined;
     };
-  }, [askVoiceQuestion]);
+  }, [synchronizeVoiceTurn]);
 
   const stage = snapshot?.job?.stage ?? snapshot?.status ?? "pending";
   const stageIndex = Math.max(0, STAGES.indexOf(stage));
@@ -1310,7 +1428,17 @@ export function RepositoryWorkbench() {
     }
     return Math.round((stageIndex / (STAGES.length - 1)) * 100);
   }, [snapshot, stageIndex]);
-  const isAnalyzing = snapshot && ["pending", "analyzing"].includes(snapshot.status);
+  const analysisStalled = snapshot?.job?.runtime_state === "stalled";
+  const isAnalyzing =
+    snapshot &&
+    !analysisStalled &&
+    ["pending", "analyzing"].includes(snapshot.status);
+  const stalledMessage =
+    snapshot?.job?.stalled_reason === "worker_unavailable"
+      ? "분석 worker가 응답하지 않습니다. 잠시 후 다시 시도해 주세요."
+      : snapshot?.job?.stalled_reason === "analysis_deadline_exceeded"
+        ? "분석 제한 시간을 초과했습니다. 새 작업으로 다시 시도할 수 있습니다."
+        : "분석 진행이 멈췄습니다. 새 작업으로 다시 시도할 수 있습니다.";
 
   return (
     <main className="app-shell">
@@ -1324,13 +1452,16 @@ export function RepositoryWorkbench() {
             <span>Repository navigation workspace</span>
           </div>
         </div>
-        <div className={`service-status ${health?.status === "ready" ? "is-ready" : ""}`}>
-          {health?.status === "ready" ? (
-            <Cloud aria-hidden size={14} />
-          ) : (
-            <CloudOff aria-hidden size={14} />
-          )}
-          <span>{health?.status === "ready" ? "API online" : "API unavailable"}</span>
+        <div className="header-actions">
+          <div className={`service-status ${health?.status === "ready" ? "is-ready" : ""}`}>
+            {health?.status === "ready" ? (
+              <Cloud aria-hidden size={14} />
+            ) : (
+              <CloudOff aria-hidden size={14} />
+            )}
+            <span>{health?.status === "ready" ? "API online" : "API unavailable"}</span>
+          </div>
+          <AuthUserMenu />
         </div>
       </header>
 
@@ -1382,10 +1513,23 @@ export function RepositoryWorkbench() {
                 <Activity aria-hidden size={16} />
               )}
               <span>
-                {snapshot.status === "failed"
+                {analysisStalled
+                  ? "분석 정체"
+                  : snapshot.status === "failed"
                   ? "분석 실패"
                   : (STAGE_LABELS[stage] ?? stage)}
               </span>
+              {analysisStalled ? <small>{stalledMessage}</small> : null}
+              {analysisStalled ? (
+                <button
+                  className="analysis-retry"
+                  disabled={submitting}
+                  onClick={() => void retryAnalysis()}
+                  type="button"
+                >
+                  {submitting ? "재시도 중" : "분석 다시 시도"}
+                </button>
+              ) : null}
               {snapshot.status === "ready" ? (
                 <small>
                   {snapshot.file_count} files · {snapshot.symbol_count} symbols ·{" "}
@@ -1633,10 +1777,13 @@ export function RepositoryWorkbench() {
             onOpenFile={openFile}
             onOpenLesson={openLearningLesson}
             onOpenLines={openLines}
+            onApplyRoadmap={applyRoadmapProposal}
+            onRejectRoadmap={rejectRoadmapProposal}
             onReplan={replanJourney}
             onSubmitActivity={submitActivity}
             onTeachingStyleChange={setTeachingStyle}
             remediation={remediation}
+            roadmapProposal={roadmapProposal}
             selection={selection}
             snapshot={snapshot}
             startHere={startHere}

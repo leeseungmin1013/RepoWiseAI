@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -18,7 +19,7 @@ from app.models import (
 )
 from app.retrieval.hybrid import evidence_id_for_chunk
 
-GENERATOR_VERSION = "grounded-checkpoint-v2"
+GENERATOR_VERSION = "grounded-checkpoint-v3"
 
 
 @dataclass(frozen=True)
@@ -43,7 +44,11 @@ class ActivitySpec:
 
 
 def ensure_learning_activity(
-    db: Session, *, step_id: str
+    db: Session,
+    *,
+    step_id: str,
+    mastery: dict | None = None,
+    last_attempt_correct: bool | None = None,
 ) -> tuple[LearningActivity, LearningStep, FileRecord]:
     step = db.scalar(
         select(LearningStep)
@@ -55,10 +60,17 @@ def ensure_learning_activity(
     )
     if step is None or step.chunk is None:
         raise ValueError("Learning step has no source-code chunk")
+    concepts = _concepts_for_step(step)
+    difficulty = select_activity_difficulty(
+        concepts,
+        mastery or {},
+        last_attempt_correct=last_attempt_correct,
+    )
+    generator_version = f"{GENERATOR_VERSION}:{difficulty}"
     existing = db.scalar(
         select(LearningActivity).where(
             LearningActivity.step_id == step.id,
-            LearningActivity.generator_version == GENERATOR_VERSION,
+            LearningActivity.generator_version == generator_version,
         )
     )
     file = db.get(FileRecord, step.chunk.file_id)
@@ -91,7 +103,8 @@ def ensure_learning_activity(
     spec = build_activity_spec(
         chunk=step.chunk,
         file=file,
-        concepts=_concepts_for_step(step),
+        concepts=concepts,
+        difficulty=difficulty,
         other_paths=other_paths,
         symbol_names=symbol_names,
         resolved_calls=resolved_calls,
@@ -100,6 +113,7 @@ def ensure_learning_activity(
     activity = LearningActivity(
         step_id=step.id,
         activity_type=spec.activity_type,
+        difficulty=difficulty,
         prompt=spec.prompt,
         choices=spec.choices,
         answer_key=spec.answer_key,
@@ -107,7 +121,7 @@ def ensure_learning_activity(
         concept_ids=spec.concept_ids,
         evidence=spec.evidence,
         source_hash=step.chunk.content_hash,
-        generator_version=GENERATOR_VERSION,
+        generator_version=generator_version,
         verification_status="verified",
     )
     db.add(activity)
@@ -124,6 +138,7 @@ def build_activity_spec(
     symbol_names: list[str],
     resolved_calls: list[CallCandidate] | None = None,
     resolved_imports: list[CallCandidate] | None = None,
+    difficulty: str = "beginner",
 ) -> ActivitySpec:
     segments = segment_source(chunk)
     throws = [item for item in segments if item.node_type == "throw_statement"]
@@ -143,6 +158,16 @@ def build_activity_spec(
     returns = [item for item in segments if item.node_type == "return_statement"]
     if returns:
         target = returns[-1]
+        if difficulty in {"intermediate", "advanced"}:
+            return _trace_value_activity(
+                chunk=chunk,
+                file=file,
+                target=target,
+                segments=segments,
+                concepts=concepts,
+                symbol_names=symbol_names,
+                difficulty=difficulty,
+            )
         return _statement_activity(
             chunk=chunk,
             file=file,
@@ -164,9 +189,14 @@ def build_activity_spec(
             distractors=distractors,
             seed=f"{chunk.id}:predict_next_call",
         )
+        advanced = difficulty == "advanced"
         return ActivitySpec(
-            activity_type="predict_next_call",
-            prompt="이 코드에서 가장 먼저 실행을 넘기는 함수 호출 대상은 무엇인가요?",
+            activity_type="identify_direct_impact" if advanced else "predict_next_call",
+            prompt=(
+                "이 호출 대상이 변경될 때 직접 영향을 받는 현재 코드의 연결은 무엇인가요?"
+                if advanced
+                else "이 코드에서 가장 먼저 실행을 넘기는 함수 호출 대상은 무엇인가요?"
+            ),
             choices=choices,
             answer_key=answer_key,
             explanation=(
@@ -234,6 +264,76 @@ def build_activity_spec(
         ),
     )
 
+
+def select_activity_difficulty(
+    concept_ids: list[str],
+    mastery: dict,
+    *,
+    last_attempt_correct: bool | None = None,
+) -> str:
+    scores = [
+        float((mastery.get(concept_id) or {}).get("score", 0.25))
+        for concept_id in concept_ids
+    ]
+    average = sum(scores) / len(scores) if scores else 0.25
+    level = 2 if average >= 0.75 else 1 if average >= 0.45 else 0
+    if last_attempt_correct is True:
+        level = min(2, level + 1)
+    elif last_attempt_correct is False:
+        level = max(0, level - 1)
+    return ("beginner", "intermediate", "advanced")[level]
+
+
+def _trace_value_activity(
+    *,
+    chunk: CodeChunk,
+    file: FileRecord,
+    target: SegmentDraft,
+    segments: list[SegmentDraft],
+    concepts: list[str],
+    symbol_names: list[str],
+    difficulty: str,
+) -> ActivitySpec:
+    expression = _returned_expression(target.source)
+    declared = [
+        match.group(1)
+        for item in segments
+        for match in [re.search(r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)", item.source)]
+        if match is not None
+    ]
+    choices, answer_key = _choices(
+        correct=expression,
+        distractors=[*declared, *symbol_names],
+        seed=f"{chunk.id}:trace_value:{difficulty}",
+    )
+    return ActivitySpec(
+        activity_type="trace_value",
+        prompt=(
+            "return 문이 호출자에게 전달하는 실제 값 또는 표현식은 무엇인가요?"
+            if difficulty == "intermediate"
+            else "이 함수의 최종 반환값을 만드는 실제 데이터 흐름의 끝은 무엇인가요?"
+        ),
+        choices=choices,
+        answer_key=answer_key,
+        explanation=(
+            f"L{target.start_line}의 return 문은 '{expression}' 값을 호출자에게 전달합니다."
+        ),
+        concept_ids=list(dict.fromkeys([*concepts, "return", "variable", "function"])),
+        evidence=_evidence(
+            chunk,
+            file,
+            target.start_line,
+            target.end_line,
+            target.source,
+        ),
+    )
+
+
+def _returned_expression(source: str) -> str:
+    compact = " ".join(source.split())
+    match = re.match(r"^return(?:\s+(.+?))?;?$", compact)
+    expression = (match.group(1) if match else compact) or "undefined"
+    return expression.rstrip(";").strip()
 
 def _statement_activity(
     *,

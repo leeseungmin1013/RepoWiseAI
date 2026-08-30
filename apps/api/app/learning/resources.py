@@ -1,12 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Protocol
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.learning.concepts import concept_definition
 from app.models import KnowledgeSource, LearnerProfile
+
+
+class SourceChecker(Protocol):
+    def head(self, url: str) -> httpx.Response: ...
+
+    def get(self, url: str) -> httpx.Response: ...
 
 
 @dataclass(frozen=True)
@@ -216,6 +225,60 @@ def recommended_sources(
         return (score + penalty, source.estimated_minutes, source.title)
 
     return sorted(sources, key=rank)[:limit]
+
+
+def refresh_knowledge_sources(
+    db: Session,
+    *,
+    checker: SourceChecker | None = None,
+    now: datetime | None = None,
+    stale_after: timedelta = timedelta(days=30),
+) -> dict[str, int]:
+    """Refresh official URLs while retaining the last known-good verification."""
+    checked_at = now or datetime.now(UTC)
+    sources = db.scalars(select(KnowledgeSource)).all()
+    owns_checker = checker is None
+    client = checker or httpx.Client(
+        follow_redirects=True,
+        timeout=httpx.Timeout(10.0, connect=5.0),
+        headers={"User-Agent": "RepoWiseAI-source-verifier/1.0"},
+    )
+    summary = {"checked": 0, "verified": 0, "unavailable": 0, "skipped_fresh": 0}
+    try:
+        for source in sources:
+            verified_at = source.verified_at
+            if (
+                source.freshness_status == "current"
+                and verified_at is not None
+                and verified_at >= checked_at - stale_after
+            ):
+                summary["skipped_fresh"] += 1
+                continue
+            summary["checked"] += 1
+            try:
+                response = client.head(source.canonical_url)
+                if response.status_code in {403, 405}:
+                    response = client.get(source.canonical_url)
+                response.raise_for_status()
+            except (httpx.HTTPError, OSError) as exc:
+                source.last_checked_at = checked_at
+                source.freshness_status = "unavailable"
+                source.last_check_status = getattr(
+                    getattr(exc, "response", None), "status_code", None
+                )
+                source.last_check_error = type(exc).__name__[:240]
+                summary["unavailable"] += 1
+                continue
+            source.verified_at = checked_at
+            source.last_checked_at = checked_at
+            source.freshness_status = "current"
+            source.last_check_status = response.status_code
+            source.last_check_error = None
+            summary["verified"] += 1
+    finally:
+        if owns_checker:
+            client.close()  # type: ignore[attr-defined]
+    return summary
 
 
 def concept_bridge(concept_ids: list[str]) -> list[dict]:

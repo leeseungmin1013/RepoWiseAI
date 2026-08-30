@@ -55,6 +55,7 @@ def get_retrieval_run(run_id: str, db: SessionDep, admin: AdminDep):
         session_id=run.session_id,
         message_id=run.message_id,
         query_text=run.query_text,
+        trace_id=run.trace_id,
         intent=run.intent,
         resolved_context=run.resolved_context,
         retrieval_plan=run.retrieval_plan,

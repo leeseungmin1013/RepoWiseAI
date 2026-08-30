@@ -685,7 +685,7 @@ def test_enqueue_deep_task_uses_dedicated_queue_and_timeout(
         lambda: Settings(deep_task_timeout_seconds=321),
     )
 
-    job_id = queue.enqueue_deep_task("dtask_1")
+    job_id = queue.enqueue_deep_task("dtask_1", trace_id="trace-1")
 
     assert job_id == "rq_1"
     assert captured["args"] == (
@@ -695,6 +695,7 @@ def test_enqueue_deep_task_uses_dedicated_queue_and_timeout(
     assert captured["kwargs"]["job_timeout"] == 321
     assert captured["kwargs"]["job_id"] == "dtask_1"
     assert captured["kwargs"]["unique"] is True
+    assert captured["kwargs"]["meta"]["trace_id"] == "trace-1"
 
 
 def test_enqueue_deep_task_treats_existing_deterministic_job_as_recovered(

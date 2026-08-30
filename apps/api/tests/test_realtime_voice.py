@@ -7,6 +7,7 @@ import httpx
 import pytest
 from starlette.requests import Request
 
+from app.api import voice
 from app.api.voice import create_voice_offer
 from app.core.config import Settings
 from app.voice.realtime import (
@@ -77,16 +78,25 @@ def test_realtime_client_requires_api_key() -> None:
         asyncio.run(client.create_call(sdp_offer="v=0", safety_identifier="safe-user"))
 
 
-def test_voice_offer_proxies_sdp_for_linked_learning_session() -> None:
+def test_voice_offer_proxies_sdp_for_linked_learning_session(monkeypatch) -> None:
     captured: dict = {}
 
     class FakeDb:
+        scalar_calls = 0
+
         def get(self, _model, session_id):
             assert session_id == "learnses_1"
             return SimpleNamespace(id=session_id, learner_profile_id="learner_1")
 
         def scalar(self, _statement):
-            return "ses_1"
+            self.scalar_calls += 1
+            return "ses_1" if self.scalar_calls == 1 else None
+
+        def commit(self):
+            pass
+
+        def refresh(self, _value):
+            pass
 
     class FakeRealtime:
         async def create_call(self, **kwargs):
@@ -97,6 +107,12 @@ def test_voice_offer_proxies_sdp_for_linked_learning_session() -> None:
                 location="/v1/realtime/calls/rtc_123",
             )
 
+    monkeypatch.setattr(
+        voice,
+        "create_voice_session",
+        lambda *_args, **_kwargs: SimpleNamespace(id="voiceses_1"),
+    )
+    monkeypatch.setattr(voice.sideband_session_manager, "start", lambda **_kwargs: None)
     body = b"v=0\r\no=offer"
     sent = False
 
@@ -131,7 +147,7 @@ def test_voice_offer_proxies_sdp_for_linked_learning_session() -> None:
     assert response.body == b"v=0\r\no=answer"
     assert response.headers["location"] == "/v1/realtime/calls/rtc_123"
     assert response.headers["x-openai-realtime-call-id"] == "rtc_123"
+    assert response.headers["x-repowise-voice-session-id"] == "voiceses_1"
     assert captured["sdp_offer"] == body.decode()
-    assert captured["safety_identifier"] == hashlib.sha256(
-        b"repowise:learner_1"
-    ).hexdigest()
+    assert captured["vad_enabled"] is False
+    assert captured["safety_identifier"] == hashlib.sha256(b"repowise:learner_1").hexdigest()

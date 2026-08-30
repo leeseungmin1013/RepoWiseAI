@@ -138,6 +138,7 @@ class AnalysisJob(Base):
         JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
     cost_reservation_id: Mapped[str | None] = mapped_column(String(48), nullable=True, index=True)
+    trace_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     stage: Mapped[str] = mapped_column(String(32), default="pending")
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
     progress_current: Mapped[int] = mapped_column(Integer, default=0)
@@ -147,6 +148,10 @@ class AnalysisJob(Base):
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_progress_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     snapshot: Mapped[RepositorySnapshot] = relationship(
@@ -469,8 +474,10 @@ class AssessmentSession(Base):
     questions: Mapped[list[dict]] = mapped_column(JSONB, default=list)
     assessment_version: Mapped[str] = mapped_column(String(60), default="stack-diagnostic-v1")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     skipped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    timed_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     snapshot: Mapped[RepositorySnapshot] = relationship(back_populates="assessment_sessions")
     profile: Mapped[LearnerProfile] = relationship()
@@ -645,6 +652,7 @@ class LearningActivity(Base):
         ForeignKey("learning_steps.id", ondelete="CASCADE"), index=True
     )
     activity_type: Mapped[str] = mapped_column(String(60), index=True)
+    difficulty: Mapped[str] = mapped_column(String(32), default="beginner", index=True)
     prompt: Mapped[str] = mapped_column(Text)
     choices: Mapped[list[dict]] = mapped_column(JSONB, default=list)
     answer_key: Mapped[str] = mapped_column(String(80))
@@ -709,6 +717,102 @@ class LearningSession(Base):
     mastery_events: Mapped[list[MasteryEvent]] = relationship(back_populates="learning_session")
 
 
+class VoiceSession(Base):
+    __tablename__ = "voice_sessions"
+    __table_args__ = (
+        Index("ix_voice_session_learning_started", "learning_session_id", "started_at"),
+        Index(
+            "uq_voice_session_one_live_per_learning_session",
+            "learning_session_id",
+            unique=True,
+            postgresql_where=text("status IN ('connecting', 'active', 'reconnecting')"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(48), primary_key=True, default=lambda: new_id("voiceses")
+    )
+    learning_session_id: Mapped[str] = mapped_column(
+        ForeignKey("learning_sessions.id", ondelete="CASCADE"), index=True
+    )
+    chat_session_id: Mapped[str] = mapped_column(
+        ForeignKey("chat_sessions.id", ondelete="CASCADE"), index=True
+    )
+    provider_call_id: Mapped[str | None] = mapped_column(String(160), nullable=True, unique=True)
+    status: Mapped[str] = mapped_column(String(32), default="connecting", index=True)
+    realtime_model: Mapped[str] = mapped_column(String(120))
+    prompt_version: Mapped[str] = mapped_column(String(60), default="voice-tutor-v2")
+    interaction_mode: Mapped[str] = mapped_column(String(32), default="push_to_talk")
+    transcript_storage_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    disconnect_reason: Mapped[str | None] = mapped_column(String(240), nullable=True)
+
+
+class VoiceTurn(Base):
+    __tablename__ = "voice_turns"
+    __table_args__ = (
+        Index("ix_voice_turn_session_created", "voice_session_id", "created_at"),
+        Index(
+            "uq_voice_turn_session_provider_call",
+            "voice_session_id",
+            "provider_call_id",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("vturn"))
+    voice_session_id: Mapped[str] = mapped_column(
+        ForeignKey("voice_sessions.id", ondelete="CASCADE"), index=True
+    )
+    chat_message_id: Mapped[str | None] = mapped_column(
+        ForeignKey("chat_messages.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    role: Mapped[str] = mapped_column(String(24))
+    transcript: Mapped[str | None] = mapped_column(Text, nullable=True)
+    transcript_status: Mapped[str] = mapped_column(String(32), default="final")
+    intent: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    route: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    tool_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    provider_call_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    context_snapshot: Mapped[dict] = mapped_column(JSONB, default=dict)
+    interrupted: Mapped[bool] = mapped_column(Boolean, default=False)
+    audio_duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    speech_end_to_ack_ms: Mapped[int] = mapped_column(Integer, default=0)
+    first_audio_ms: Mapped[int] = mapped_column(Integer, default=0)
+    completed_ms: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class RoadmapProposal(Base):
+    __tablename__ = "roadmap_proposals"
+    __table_args__ = (
+        Index("ix_roadmap_proposal_session_created", "learning_session_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(48), primary_key=True, default=lambda: new_id("roadprop")
+    )
+    learning_session_id: Mapped[str] = mapped_column(
+        ForeignKey("learning_sessions.id", ondelete="CASCADE"), index=True
+    )
+    path_id: Mapped[str] = mapped_column(
+        ForeignKey("learning_paths.id", ondelete="CASCADE"), index=True
+    )
+    base_revision: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(32), default="proposed", index=True)
+    request_json: Mapped[dict] = mapped_column(JSONB, default=dict)
+    candidates_json: Mapped[list[dict]] = mapped_column(JSONB, default=list)
+    selection_json: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    diff_json: Mapped[dict] = mapped_column(JSONB, default=dict)
+    verification_json: Mapped[dict] = mapped_column(JSONB, default=dict)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rejected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class ActivityAttempt(Base):
     __tablename__ = "activity_attempts"
     __table_args__ = (
@@ -726,6 +830,8 @@ class ActivityAttempt(Base):
     is_correct: Mapped[bool] = mapped_column(Boolean, index=True)
     score_delta: Mapped[float] = mapped_column(Float)
     feedback: Mapped[dict] = mapped_column(JSONB, default=dict)
+    trace_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     learning_session: Mapped[LearningSession] = relationship(back_populates="activity_attempts")
@@ -851,6 +957,10 @@ class KnowledgeSource(Base):
     language: Mapped[str] = mapped_column(String(20), default="ko")
     estimated_minutes: Mapped[int] = mapped_column(Integer, default=10)
     verified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    freshness_status: Mapped[str] = mapped_column(String(32), default="unverified")
+    last_check_status: Mapped[int | None] = mapped_column(Integer)
+    last_check_error: Mapped[str | None] = mapped_column(String(240))
 
 
 class Concept(Base):
@@ -978,6 +1088,7 @@ class DeepTask(Base):
         ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True
     )
     cost_reservation_id: Mapped[str | None] = mapped_column(String(48), nullable=True, index=True)
+    trace_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     learning_session_id: Mapped[str | None] = mapped_column(
         ForeignKey("learning_sessions.id", ondelete="SET NULL"), nullable=True, index=True
     )
@@ -1023,6 +1134,7 @@ class RetrievalRun(Base):
         ForeignKey("chat_messages.id", ondelete="CASCADE"), index=True
     )
     query_text: Mapped[str] = mapped_column(Text)
+    trace_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     resolved_context: Mapped[dict] = mapped_column(JSONB, default=dict)
     intent: Mapped[str] = mapped_column(String(40), index=True)
     retrieval_plan: Mapped[dict] = mapped_column(JSONB, default=dict)

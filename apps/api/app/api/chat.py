@@ -1,6 +1,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.auth import AuthDep
@@ -89,6 +90,33 @@ def create_message_endpoint(
         response.headers["X-Quota-Remaining"] = str(result.quota["remaining_micro_usd"])
     return result
 
+
+@router.get("/sessions/{session_id}/messages", response_model=list[ChatAnswerResponse])
+def list_session_answers(
+    session_id: str,
+    db: SessionDep,
+    auth: AuthDep,
+    limit: int = 8,
+):
+    session = db.get(ChatSession, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    ensure_chat_access(db, auth, session)
+    bounded_limit = max(1, min(limit, 20))
+    messages = db.scalars(
+        select(ChatMessage)
+        .where(
+            ChatMessage.session_id == session.id,
+            ChatMessage.role == "assistant",
+        )
+        .order_by(ChatMessage.created_at.desc())
+        .limit(bounded_limit)
+    ).all()
+    return [
+        ChatAnswerResponse.model_validate(message.structured_payload)
+        for message in reversed(messages)
+        if message.structured_payload
+    ]
 
 @router.get("/messages/{message_id}", response_model=ChatAnswerResponse)
 def get_message(message_id: str, db: SessionDep, auth: AuthDep):

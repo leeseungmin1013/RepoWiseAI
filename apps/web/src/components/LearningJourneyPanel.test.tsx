@@ -6,6 +6,7 @@ import type {
   LearningActivity,
   LearningPath,
   LearningSession,
+  RoadmapProposal,
 } from "@/lib/api";
 
 import { LearningJourneyPanel } from "./LearningJourneyPanel";
@@ -105,6 +106,7 @@ const activity: LearningActivity = {
   id: "activity_1",
   step_id: "step_1",
   activity_type: "predict_next_call",
+  difficulty: "intermediate",
   prompt: "가장 먼저 호출되는 함수는 무엇인가요?",
   choices: [
     { id: "choice_1", label: "loadData" },
@@ -116,6 +118,44 @@ const activity: LearningActivity = {
   latest_attempt: null,
 };
 
+const roadmapProposal: RoadmapProposal = {
+  id: "proposal_1",
+  learning_session_id: "session_1",
+  path_id: "path_1",
+  base_revision: 1,
+  status: "proposed",
+  request: { focus_concept_ids: ["function"], max_lessons: 20 },
+  candidates: [],
+  selected_candidate_ids: ["chunk_new"],
+  diff: {
+    added_lessons: [
+      {
+        candidate_id: "chunk_new",
+        title: "새 함수 흐름",
+        reason: "취약 개념 function 보강",
+      },
+    ],
+    removed_lessons: [],
+    selected_lessons: [
+      {
+        candidate_id: "chunk_new",
+        title: "새 함수 흐름",
+        module_type: "feature_flow",
+      },
+    ],
+    order_changed: true,
+    previous_order: ["chunk_old"],
+    proposed_order: ["chunk_new"],
+    previous_estimated_minutes: 20,
+    proposed_estimated_minutes: 15,
+    estimated_minutes_delta: -5,
+  },
+  verification: { valid: true, errors: [], fallback_used: false },
+  failure_reason: null,
+  created_at: "2026-08-30T00:00:00Z",
+  applied_at: null,
+  rejected_at: null,
+};
 describe("LearningJourneyPanel", () => {
   it("keeps lesson help, progress, and grounded questions in one view", () => {
     const onHelp = vi.fn();
@@ -130,6 +170,7 @@ describe("LearningJourneyPanel", () => {
         asking={false}
         busy={false}
         file={null}
+        onApplyRoadmap={vi.fn()}
         onAsk={vi.fn()}
         onCompleteHelp={vi.fn()}
         onFeedback={onFeedback}
@@ -137,11 +178,13 @@ describe("LearningJourneyPanel", () => {
         onOpenEvidence={vi.fn()}
         onOpenLesson={vi.fn()}
         onOpenLines={vi.fn()}
+        onRejectRoadmap={vi.fn()}
         onReplan={vi.fn()}
         onTeachingStyleChange={vi.fn()}
         onSubmitActivity={onSubmitActivity}
         path={path}
         remediation={null}
+        roadmapProposal={null}
         selection={null}
         session={session}
         teachingStyle="beginner"
@@ -157,5 +200,49 @@ describe("LearningJourneyPanel", () => {
     expect(onHelp).toHaveBeenCalledWith("prerequisite");
     expect(onSubmitActivity).toHaveBeenCalledWith("choice_1");
     expect(onFeedback).toHaveBeenCalledWith(path.modules[0].lessons[0], "understood");
+  });
+
+  it("shows a verified roadmap diff and requires explicit approval", () => {
+    const onApplyRoadmap = vi.fn();
+    const onRejectRoadmap = vi.fn();
+    render(
+      <LearningJourneyPanel
+        activity={activity}
+        activityAttempt={null}
+        activityBusy={false}
+        answers={[]}
+        asking={false}
+        busy={false}
+        file={null}
+        onApplyRoadmap={onApplyRoadmap}
+        onAsk={vi.fn()}
+        onCompleteHelp={vi.fn()}
+        onFeedback={vi.fn()}
+        onHelp={vi.fn()}
+        onOpenEvidence={vi.fn()}
+        onOpenLesson={vi.fn()}
+        onOpenLines={vi.fn()}
+        onRejectRoadmap={onRejectRoadmap}
+        onReplan={vi.fn()}
+        onTeachingStyleChange={vi.fn()}
+        onSubmitActivity={vi.fn()}
+        path={path}
+        remediation={null}
+        roadmapProposal={roadmapProposal}
+        selection={null}
+        session={session}
+        teachingStyle="beginner"
+      />,
+    );
+
+    expect(screen.getByRole("region", { name: "학습 경로 변경안" })).toBeTruthy();
+    expect(screen.getByText("새 함수 흐름")).toBeTruthy();
+    expect(screen.getByText("-5분")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "변경안 적용" }));
+    fireEvent.click(screen.getByRole("button", { name: "거절" }));
+
+    expect(onApplyRoadmap).toHaveBeenCalledOnce();
+    expect(onRejectRoadmap).toHaveBeenCalledOnce();
   });
 });

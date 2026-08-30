@@ -80,10 +80,18 @@ class MeteredOpenAIClient:
         self,
         api_key: str,
         recorder: Callable[..., None] | None = None,
+        *,
+        timeout: float | None = None,
+        max_retries: int | None = None,
     ) -> None:
         from openai import OpenAI
 
-        self._client = OpenAI(api_key=api_key)
+        options: dict[str, Any] = {"api_key": api_key}
+        if timeout is not None:
+            options["timeout"] = timeout
+        if max_retries is not None:
+            options["max_retries"] = max_retries
+        self._client = OpenAI(**options)
         self._recorder = recorder
 
     def embeddings_create(self, **request: Any) -> Any:

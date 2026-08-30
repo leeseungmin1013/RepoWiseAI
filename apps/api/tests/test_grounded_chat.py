@@ -170,6 +170,8 @@ def test_create_grounded_message_persists_the_existing_response_contract(
         "preferred_style": "beginner",
         "index_version": "structure-v1",
         "learning_context": {},
+        "generation_latency_ms": 0,
+        "retrieval_latency_ms": 0,
         "modality": "voice",
         "voice_turn_id": "vturn_1",
     }

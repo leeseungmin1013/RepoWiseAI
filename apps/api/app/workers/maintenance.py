@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from time import monotonic
 
-from sqlalchemy import delete, text
+from sqlalchemy import delete, text, update
 
 from app.core.config import get_settings
 from app.core.db import SessionLocal
 from app.core.logging import configure_logging
-from app.models import SemanticCacheEntry
+from app.learning.resources import ensure_knowledge_sources, refresh_knowledge_sources
+from app.models import SemanticCacheEntry, VoiceTurn
 from app.services.usage import UsageService
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,27 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def expire_voice_transcripts(
+    db,
+    *,
+    retention_days: int,
+    now: datetime | None = None,
+) -> int:
+    cutoff = (now or _utc_now()) - timedelta(days=retention_days)
+    result = db.execute(
+        update(VoiceTurn)
+        .where(
+            VoiceTurn.created_at < cutoff,
+            VoiceTurn.transcript.is_not(None),
+        )
+        .values(
+            transcript=None,
+            transcript_status="expired",
+        )
+    )
+    return int(result.rowcount or 0)
+
+
 def run_maintenance() -> dict[str, object]:
     started_at = _utc_now()
     started = monotonic()
@@ -28,6 +50,8 @@ def run_maintenance() -> dict[str, object]:
         "started_at": started_at.isoformat(),
         "semantic_cache_deleted": 0,
         "stale_reservations_released": 0,
+        "voice_transcripts_expired": 0,
+        "learning_sources": {},
     }
     with SessionLocal() as db:
         lock_acquired = bool(
@@ -53,9 +77,15 @@ def run_maintenance() -> dict[str, object]:
                 )
             )
             summary["semantic_cache_deleted"] = int(result.rowcount or 0)
-            summary["stale_reservations_released"] = UsageService(
-                get_settings()
-            ).release_stale(db, commit=False)
+            summary["stale_reservations_released"] = UsageService(get_settings()).release_stale(
+                db, commit=False
+            )
+            summary["voice_transcripts_expired"] = expire_voice_transcripts(
+                db,
+                retention_days=get_settings().voice_transcript_retention_days,
+            )
+            ensure_knowledge_sources(db)
+            summary["learning_sources"] = refresh_knowledge_sources(db)
             db.commit()
             summary["outcome"] = "success"
         except Exception:

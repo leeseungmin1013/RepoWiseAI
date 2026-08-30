@@ -70,6 +70,12 @@ services:
         value: "250000"
       - key: REALTIME_MAX_DURATION_SECONDS
         value: "300"
+      - key: ANALYSIS_QUEUE_STALL_SECONDS
+        value: "120"
+      - key: ANALYSIS_PROGRESS_STALL_SECONDS
+        value: "180"
+      - key: WORKER_HEARTBEAT_STALE_SECONDS
+        value: "180"
 
   - type: worker
     name: repowise-worker
@@ -136,3 +142,21 @@ services:
         value: "900"
       - key: QUEUE_RECOVERY_BATCH_SIZE
         value: "500"
+      - key: QUEUE_RECOVERY_INTERVAL_SECONDS
+        value: "60"
+      - key: ANALYSIS_QUEUE_STALL_SECONDS
+        value: "120"
+      - key: ANALYSIS_PROGRESS_STALL_SECONDS
+        value: "180"
+      - key: ANALYSIS_MAX_RETRIES
+        value: "2"
+      - key: WORKER_HEARTBEAT_STALE_SECONDS
+        value: "180"
+      - key: OPENAI_TIMEOUT_SECONDS
+        value: "60"
+      - key: OPENAI_MAX_RETRIES
+        value: "2"
+      - key: EMBEDDING_BATCH_MAX_INPUTS
+        value: "64"
+      - key: EMBEDDING_BATCH_MAX_CHARACTERS
+        value: "240000"

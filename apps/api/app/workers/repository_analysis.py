@@ -55,8 +55,34 @@ from app.services.usage import UsageContext, UsageService
 from app.workers.context import bind_worker_job_context
 
 
+def _reserve_chunk_template(content_hash: str, known_hashes: set[str]) -> bool:
+    """Reserve one template per content hash even when the session does not autoflush."""
+    if content_hash in known_hashes:
+        return False
+    known_hashes.add(content_hash)
+    return True
+
+
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _touch_job(
+    job: AnalysisJob | None,
+    *,
+    current: int | None = None,
+    total: int | None = None,
+) -> None:
+    if job is None:
+        return
+    now = _utc_now()
+    job.heartbeat_at = now
+    if current is not None:
+        if current != job.progress_current:
+            job.last_progress_at = now
+        job.progress_current = current
+    if total is not None:
+        job.progress_total = total
 
 
 def _set_stage(
@@ -79,10 +105,10 @@ def _set_stage(
         if job:
             job.stage = stage
             job.status = "running"
-            job.progress_current = current
-            job.progress_total = total
             if job.started_at is None:
                 job.started_at = _utc_now()
+            _touch_job(job, current=current, total=total)
+            job.last_progress_at = job.heartbeat_at
         db.commit()
 
 
@@ -773,7 +799,7 @@ def analyze_repository(snapshot_id: str) -> None:
                         .order_by(AnalysisJob.created_at.desc())
                     )
                     if job:
-                        job.progress_current = index
+                        _touch_job(job, current=index)
                     db.commit()
 
             job = db.scalar(
@@ -783,15 +809,15 @@ def analyze_repository(snapshot_id: str) -> None:
             )
             if job:
                 job.stage = "graph_building"
-                job.progress_current = 0
-                job.progress_total = len(parse_results)
+                _touch_job(job, current=0, total=max(1, len(parse_results) * 2))
+                job.last_progress_at = job.heartbeat_at
             db.commit()
 
             symbol_ids: dict[str, str] = {}
             display_symbol_ids: dict[tuple[str, str], str] = {}
             global_display_symbol_ids: dict[str, list[str]] = defaultdict(list)
             symbols_by_file: dict[str, list[Symbol]] = {}
-            for path, result in parse_results.items():
+            for graph_index, (path, result) in enumerate(parse_results.items(), start=1):
                 file_record = file_records[path]
                 for parsed in result.symbols:
                     symbol = Symbol(
@@ -811,6 +837,9 @@ def analyze_repository(snapshot_id: str) -> None:
                     display_symbol_ids[(path, parsed.display_name)] = symbol.id
                     global_display_symbol_ids[parsed.display_name].append(symbol.id)
                     symbols_by_file.setdefault(path, []).append(symbol)
+                if graph_index % 25 == 0:
+                    _touch_job(job, current=graph_index)
+                    db.commit()
 
             known_paths = set(file_records)
             next_package_roots = _find_next_package_roots(
@@ -821,7 +850,8 @@ def analyze_repository(snapshot_id: str) -> None:
             )
             import_binding_index = _build_import_binding_index(parse_results, known_paths)
             edge_count = 0
-            for path, result in parse_results.items():
+            graph_offset = len(parse_results)
+            for graph_index, (path, result) in enumerate(parse_results.items(), start=1):
                 file_record = file_records[path]
                 for parsed_edge in result.edges:
                     resolved_edges = _resolve_parsed_edge(
@@ -857,6 +887,9 @@ def analyze_repository(snapshot_id: str) -> None:
                             )
                         )
                         edge_count += 1
+                if graph_index % 25 == 0:
+                    _touch_job(job, current=graph_offset + graph_index)
+                    db.commit()
 
             job = db.scalar(
                 select(AnalysisJob)
@@ -865,11 +898,24 @@ def analyze_repository(snapshot_id: str) -> None:
             )
             if job:
                 job.stage = "chunking"
-                job.progress_current = 0
-                job.progress_total = len(file_records)
+                _touch_job(job, current=0, total=len(file_records))
+                job.last_progress_at = job.heartbeat_at
             db.commit()
 
             chunk_inputs: list[tuple[FileRecord, object]] = []
+            chunker_fingerprint = (
+                f"{settings.chunker_version}:{settings.chunk_max_lines}:"
+                f"{settings.chunk_overlap_lines}"
+            )
+            content_hashes = {record.content_hash for record in file_records.values()}
+            known_template_hashes = set(
+                db.scalars(
+                    select(ChunkTemplate.content_hash).where(
+                        ChunkTemplate.chunker_fingerprint == chunker_fingerprint,
+                        ChunkTemplate.content_hash.in_(content_hashes),
+                    )
+                ).all()
+            )
             for file_index, (path, file_record) in enumerate(file_records.items(), start=1):
                 spans = [
                     SymbolSpan(
@@ -891,17 +937,7 @@ def analyze_repository(snapshot_id: str) -> None:
                     max_lines=settings.chunk_max_lines,
                     overlap_lines=settings.chunk_overlap_lines,
                 )
-                chunker_fingerprint = (
-                    f"{settings.chunker_version}:{settings.chunk_max_lines}:"
-                    f"{settings.chunk_overlap_lines}"
-                )
-                template = db.scalar(
-                    select(ChunkTemplate).where(
-                        ChunkTemplate.content_hash == file_record.content_hash,
-                        ChunkTemplate.chunker_fingerprint == chunker_fingerprint,
-                    )
-                )
-                if template is None:
+                if _reserve_chunk_template(file_record.content_hash, known_template_hashes):
                     db.add(
                         ChunkTemplate(
                             content_hash=file_record.content_hash,
@@ -921,14 +957,14 @@ def analyze_repository(snapshot_id: str) -> None:
                     reuse_metrics["chunk_template_reused"] += 1
                 chunk_inputs.extend((file_record, draft) for draft in drafts)
                 if job and file_index % 50 == 0:
-                    job.progress_current = file_index
+                    _touch_job(job, current=file_index)
                     db.commit()
 
             embedder = build_embedder(settings)
             if job:
                 job.stage = "embedding"
-                job.progress_current = 0
-                job.progress_total = len(chunk_inputs)
+                _touch_job(job, current=0, total=len(chunk_inputs))
+                job.last_progress_at = job.heartbeat_at
                 db.commit()
             embedding_hashes = {text_hash(draft.embedding_text) for _, draft in chunk_inputs}
             existing_embedding_hashes = set(
@@ -942,6 +978,11 @@ def analyze_repository(snapshot_id: str) -> None:
                     )
                 ).all()
             )
+
+            def commit_embedding_progress(current: int, total: int) -> None:
+                _touch_job(job, current=current, total=total)
+                db.commit()
+
             embeddings, embedding_metrics = embed_documents_with_cache(
                 db,
                 texts=[draft.embedding_text for _, draft in chunk_inputs],
@@ -950,6 +991,7 @@ def analyze_repository(snapshot_id: str) -> None:
                 model=embedder.model_name,
                 dimensions=settings.embedding_dimensions,
                 prompt_version=settings.embedding_prompt_version,
+                on_progress=commit_embedding_progress if job else None,
             )
             reuse_metrics.update(embedding_metrics)
 
@@ -1030,12 +1072,12 @@ def analyze_repository(snapshot_id: str) -> None:
 
             if job:
                 job.stage = "guidance"
-                job.progress_current = 0
-                job.progress_total = 1
+                _touch_job(job, current=0, total=1)
+                job.last_progress_at = job.heartbeat_at
             db.flush()
             ensure_guided_path(db, snapshot_id)
             if job:
-                job.progress_current = 1
+                _touch_job(job, current=1)
 
             snapshot = db.get(RepositorySnapshot, snapshot_id)
             job = db.scalar(
@@ -1090,6 +1132,8 @@ def analyze_repository(snapshot_id: str) -> None:
             job.progress_current = len(chunk_inputs)
             job.progress_total = len(chunk_inputs)
             job.finished_at = _utc_now()
+            job.heartbeat_at = job.finished_at
+            job.last_progress_at = job.finished_at
             db.commit()
     except Exception as exc:
         with SessionLocal() as db:

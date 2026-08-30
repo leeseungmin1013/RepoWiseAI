@@ -12,7 +12,7 @@ export type VoiceSessionStatus =
   | "stopped"
   | "error";
 
-export type SdpAnswer = string | { sdp: string };
+export type SdpAnswer = string | { sdp: string; voiceSessionId?: string; maxDurationSeconds?: number };
 
 export type RealtimeEvent = Record<string, unknown>;
 
@@ -23,11 +23,17 @@ export type UseRealtimeLearningSessionOptions = {
    * authentication and learning-session context without coupling WebRTC to a
    * particular API client.
    */
-  exchangeSdp: (offerSdp: string, signal: AbortSignal) => Promise<SdpAnswer>;
+  exchangeSdp: (
+    offerSdp: string,
+    signal: AbortSignal,
+    vadEnabled: boolean,
+  ) => Promise<SdpAnswer>;
   audioConstraints?: boolean | MediaTrackConstraints;
   rtcConfiguration?: RTCConfiguration;
   onRealtimeEvent?: (event: RealtimeEvent) => void;
   onFinalTranscript?: (transcript: string) => void;
+  stopSession?: (voiceSessionId: string) => Promise<unknown>;
+  defaultVadEnabled?: boolean;
   /** Test seam. Production callers should use the browser default. */
   createPeerConnection?: (configuration?: RTCConfiguration) => RTCPeerConnection;
   maxDurationSeconds?: number;
@@ -41,10 +47,12 @@ export type RealtimeLearningSession = {
   isSupported: boolean;
   isConnected: boolean;
   isTalking: boolean;
+  isVadEnabled: boolean;
   start: () => Promise<void>;
   stop: () => void;
   startTalking: () => void;
   endTalking: () => void;
+  setVadEnabled: (enabled: boolean) => void;
   sendEvent: (event: RealtimeEvent) => boolean;
   speakVerifiedText: (text: string) => boolean;
   remoteAudioRef: (element: HTMLAudioElement | null) => void;
@@ -84,6 +92,8 @@ export function useRealtimeLearningSession({
   rtcConfiguration,
   onRealtimeEvent,
   onFinalTranscript,
+  stopSession,
+  defaultVadEnabled = false,
   createPeerConnection,
   maxDurationSeconds =
     Number(process.env.NEXT_PUBLIC_REALTIME_MAX_DURATION_SECONDS ?? 300) || 300,
@@ -93,6 +103,7 @@ export function useRealtimeLearningSession({
     useState<RTCPeerConnectionState>("new");
   const [error, setError] = useState<Error | null>(null);
   const [interimTranscript, setInterimTranscript] = useState("");
+  const [isVadEnabled, setIsVadEnabled] = useState(defaultVadEnabled);
   const [isSupported, setIsSupported] = useState(false);
 
   const statusRef = useRef<VoiceSessionStatus>("idle");
@@ -105,6 +116,8 @@ export function useRealtimeLearningSession({
   const remoteAudioElementRef = useRef<HTMLAudioElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const durationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const voiceSessionIdRef = useRef<string | null>(null);
+  const stopRef = useRef<() => void>(() => undefined);
 
   const exchangeSdpRef = useRef(exchangeSdp);
   const eventHandlerRef = useRef(onRealtimeEvent);
@@ -112,6 +125,8 @@ export function useRealtimeLearningSession({
   const constraintsRef = useRef(audioConstraints);
   const rtcConfigurationRef = useRef(rtcConfiguration);
   const peerFactoryRef = useRef(createPeerConnection);
+  const stopSessionRef = useRef(stopSession);
+  const vadEnabledRef = useRef(defaultVadEnabled);
 
   useEffect(() => {
     exchangeSdpRef.current = exchangeSdp;
@@ -120,6 +135,7 @@ export function useRealtimeLearningSession({
     constraintsRef.current = audioConstraints;
     rtcConfigurationRef.current = rtcConfiguration;
     peerFactoryRef.current = createPeerConnection;
+    stopSessionRef.current = stopSession;
   }, [
     audioConstraints,
     createPeerConnection,
@@ -127,6 +143,7 @@ export function useRealtimeLearningSession({
     onFinalTranscript,
     onRealtimeEvent,
     rtcConfiguration,
+    stopSession,
   ]);
 
   const updateStatus = useCallback((nextStatus: VoiceSessionStatus) => {
@@ -137,6 +154,11 @@ export function useRealtimeLearningSession({
   }, []);
 
   const disposeResources = useCallback(() => {
+    const voiceSessionId = voiceSessionIdRef.current;
+    voiceSessionIdRef.current = null;
+    if (voiceSessionId) {
+      void stopSessionRef.current?.(voiceSessionId).catch(() => undefined);
+    }
     if (durationTimerRef.current) {
       clearTimeout(durationTimerRef.current);
       durationTimerRef.current = null;
@@ -282,7 +304,7 @@ export function useRealtimeLearningSession({
       if (!microphoneTrack) {
         throw new Error("사용 가능한 마이크 오디오 트랙을 찾지 못했습니다.");
       }
-      microphoneTrack.enabled = false;
+      microphoneTrack.enabled = vadEnabledRef.current;
       microphoneTrackRef.current = microphoneTrack;
       peer.addTrack(microphoneTrack, localStream);
 
@@ -321,6 +343,25 @@ export function useRealtimeLearningSession({
             const transcript = event.transcript.trim();
             setInterimTranscript("");
             if (transcript) {
+              const normalized = transcript
+                .normalize("NFKC")
+                .replace(/[\s.,!?~。！？]+/g, "")
+                .toLowerCase();
+              if (["중지", "종료", "그만", "stop"].includes(normalized)) {
+                stopRef.current();
+                return;
+              }
+              if (["음소거", "마이크꺼", "mute"].includes(normalized)) {
+                if (microphoneTrackRef.current) {
+                  microphoneTrackRef.current.enabled = false;
+                }
+                dataChannel.send(JSON.stringify({ type: "response.cancel" }));
+                dataChannel.send(
+                  JSON.stringify({ type: "output_audio_buffer.clear" }),
+                );
+                updateStatus("ready");
+                return;
+              }
               finalTranscriptHandlerRef.current?.(transcript);
             }
           }
@@ -340,8 +381,12 @@ export function useRealtimeLearningSession({
       const answer = await exchangeSdpRef.current(
         offer.sdp,
         abortController.signal,
+        vadEnabledRef.current,
       );
       if (peerRef.current !== peer || abortController.signal.aborted) return;
+      if (typeof answer !== "string" && answer.voiceSessionId) {
+        voiceSessionIdRef.current = answer.voiceSessionId;
+      }
 
       await peer.setRemoteDescription({
         type: "answer",
@@ -360,7 +405,14 @@ export function useRealtimeLearningSession({
         disposeResources();
         if (mountedRef.current) setConnectionState("closed");
         updateStatus("stopped");
-      }, Math.max(1, maxDurationSeconds) * 1000);
+      },
+      Math.max(
+        1,
+        typeof answer === "string"
+          ? maxDurationSeconds
+          : answer.maxDurationSeconds ?? maxDurationSeconds,
+      ) * 1000,
+      );
     } catch (value) {
       if (!abortController.signal.aborted) {
         fail(value);
@@ -377,7 +429,11 @@ export function useRealtimeLearningSession({
 
   const startTalking = useCallback(() => {
     const track = microphoneTrackRef.current;
-    if (!track || statusRef.current !== "ready") return;
+    if (
+      !track ||
+      statusRef.current !== "ready" ||
+      vadEnabledRef.current
+    ) return;
     setInterimTranscript("");
     sendEvent({ type: "response.cancel" });
     sendEvent({ type: "output_audio_buffer.clear" });
@@ -395,6 +451,16 @@ export function useRealtimeLearningSession({
     }
   }, [sendEvent, updateStatus]);
 
+  const setVadEnabled = useCallback((enabled: boolean) => {
+    if (
+      statusRef.current !== "idle" &&
+      statusRef.current !== "stopped" &&
+      statusRef.current !== "error"
+    ) return;
+    vadEnabledRef.current = enabled;
+    setIsVadEnabled(enabled);
+  }, []);
+
   const stop = useCallback(() => {
     if (
       statusRef.current === "idle" ||
@@ -411,6 +477,10 @@ export function useRealtimeLearningSession({
     }
     updateStatus("stopped");
   }, [disposeResources, updateStatus]);
+
+  useEffect(() => {
+    stopRef.current = stop;
+  }, [stop]);
 
   const speakVerifiedText = useCallback(
     (text: string) => {
@@ -443,10 +513,12 @@ export function useRealtimeLearningSession({
       status === "talking" ||
       status === "reconnecting",
     isTalking: status === "talking",
+    isVadEnabled,
     start,
     stop,
     startTalking,
     endTalking,
+    setVadEnabled,
     sendEvent,
     speakVerifiedText,
     remoteAudioRef,

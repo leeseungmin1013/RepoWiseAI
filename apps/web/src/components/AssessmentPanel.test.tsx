@@ -46,8 +46,10 @@ const assessment: AssessmentSession = {
   answered_count: 0,
   total_count: 1,
   created_at: "2026-07-12T00:00:00Z",
+  expires_at: "2026-07-12T00:15:00Z",
   submitted_at: null,
   skipped_at: null,
+  timed_out_at: null,
   profile: {
     id: "learner_1",
     anonymous_key: "learner-key",

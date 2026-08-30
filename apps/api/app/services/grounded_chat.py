@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from time import perf_counter
 from typing import Any
 
 from fastapi import HTTPException
@@ -7,6 +8,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.ai.answers import GroundedAnswerGenerator
 from app.core.config import get_settings
+from app.core.logging import current_trace_id
 from app.models import (
     ChatMessage,
     ChatSession,
@@ -66,11 +68,13 @@ def create_grounded_message(
         learning_session.current_selection = selection
     learning_context = _learning_context(session, learning_session)
     question = content.strip()
+    trace_id = current_trace_id()
     user_message = ChatMessage(
         session_id=session.id,
         role="user",
         content=question,
         structured_payload={"selection": selection, "learning_context": learning_context},
+        model_metadata={"trace_id": trace_id} if trace_id else {},
     )
     db.add(user_message)
     db.flush()
@@ -142,6 +146,7 @@ def create_grounded_message(
             session_id=session.id,
             message_id=user_message.id,
             query_text=retrieval_query,
+            trace_id=trace_id,
             resolved_context=selection,
             intent=query_analysis.intent,
             retrieval_plan={"cache": retrieval_lookup.status},
@@ -266,6 +271,7 @@ def create_grounded_message(
                     else getattr(settings, "chat_generation_reservation_micro_usd", 100_000)
                 ),
             )
+    generation_started = perf_counter()
     try:
         generated = (
             cache_service.generated_answer(generation_lookup)
@@ -283,6 +289,7 @@ def create_grounded_message(
             usage_service.release(db, reservation.id)
         raise
 
+    generation_latency_ms = round((perf_counter() - generation_started) * 1_000)
     usage_summary = getattr(generated, "usage", {})
     quota_summary: dict[str, Any] = {}
     if usage_context is not None:
@@ -333,7 +340,13 @@ def create_grounded_message(
         "preferred_style": preferred_style,
         "index_version": snapshot.index_version,
         "learning_context": learning_context,
+        "generation_latency_ms": generation_latency_ms,
+        "retrieval_latency_ms": getattr(retrieval.run, "latency_ms", 0),
     }
+    if trace_id:
+        model_metadata["trace_id"] = trace_id
+    if fallback_reason := getattr(generated, "fallback_reason", None):
+        model_metadata["fallback_reason"] = fallback_reason
     if reasoning_effort:
         model_metadata["reasoning_effort"] = reasoning_effort
     if retrieval_shadow_lookup or generation_shadow_lookup:

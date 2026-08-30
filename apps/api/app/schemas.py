@@ -25,14 +25,20 @@ class AnalysisJobResponse(BaseModel):
 
     id: str
     snapshot_id: str
+    trace_id: str | None = None
     stage: str
     status: str
     progress_current: int
     progress_total: int
     error_code: str | None
     error_detail: str | None
+    retry_count: int
+    runtime_state: str = "queued"
+    stalled_reason: str | None = None
     created_at: datetime
     started_at: datetime | None
+    heartbeat_at: datetime | None = None
+    last_progress_at: datetime | None = None
     finished_at: datetime | None
 
 
@@ -642,6 +648,7 @@ class DeepTaskResponse(BaseModel):
     kind: str
     progress: int = Field(ge=0, le=100)
     message: str
+    trace_id: str | None = None
     result: ChatAnswerResponse | ResearchMaterialsResponse | ChangeBriefResponse | None = None
     error: DeepTaskErrorResponse | None = None
 
@@ -745,8 +752,10 @@ class AssessmentSessionResponse(BaseModel):
     answered_count: int
     total_count: int
     created_at: datetime
+    expires_at: datetime
     submitted_at: datetime | None
     skipped_at: datetime | None
+    timed_out_at: datetime | None
     profile: LearnerProfileResponse
 
 
@@ -847,6 +856,37 @@ class LearningReplanResponse(BaseModel):
     revision: int
 
 
+class RoadmapProposalCreate(BaseModel):
+    focus_concept_ids: list[str] = Field(default_factory=list, max_length=20)
+    max_lessons: int = Field(default=40, ge=6, le=40)
+    selected_candidate_ids: list[str] | None = Field(default=None, max_length=40)
+
+
+class RoadmapProposalResponse(BaseModel):
+    id: str
+    learning_session_id: str
+    path_id: str
+    base_revision: int
+    status: str
+    request: dict
+    candidates: list[dict]
+    selected_candidate_ids: list[str]
+    diff: dict
+    verification: dict
+    failure_reason: str | None
+    created_at: datetime
+    applied_at: datetime | None
+    rejected_at: datetime | None
+
+
+class RoadmapApplyResponse(BaseModel):
+    proposal: RoadmapProposalResponse
+    path: LearningPathResponse
+    session: LearningSessionResponse
+    preserved_lesson_ids: list[str]
+    revision: int
+
+
 class LearningLessonFeedbackCreate(BaseModel):
     event_type: Literal["opened", "understood", "needs_help", "skip"]
 
@@ -907,6 +947,9 @@ class LearningSourceResponse(BaseModel):
     language: str
     estimated_minutes: int
     recommendation_reason: str
+    verified_at: datetime
+    last_checked_at: datetime | None
+    freshness_status: str
 
 
 class ActivityChoiceResponse(BaseModel):
@@ -927,6 +970,7 @@ class LearningActivityResponse(BaseModel):
     id: str
     step_id: str
     activity_type: str
+    difficulty: str
     prompt: str
     choices: list[ActivityChoiceResponse]
     concept_ids: list[str]
@@ -958,6 +1002,8 @@ class ActivityAttemptResponse(BaseModel):
     feedback: dict
     evidence: CitationResponse
     mastery_updates: list[MasteryUpdateResponse]
+    trace_id: str | None = None
+    latency_ms: int = 0
     created_at: datetime
 
 
@@ -1031,6 +1077,7 @@ class RetrievalRunDebug(BaseModel):
     session_id: str
     message_id: str
     query_text: str
+    trace_id: str | None = None
     intent: str
     resolved_context: dict
     retrieval_plan: dict

@@ -130,7 +130,8 @@ export function DeepTaskTray({
 
       {displayError ? (
         <div className={styles.error} role="alert">
-          {displayError}
+          <span>{displayError}</span>
+          {task?.trace_id ? <small>지원 ID: {task.trace_id}</small> : null}
         </div>
       ) : null}
 

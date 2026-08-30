@@ -3,6 +3,7 @@
 import { FormEvent, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
+import { safeNextPath } from "@/lib/auth";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 export function AuthForm({ mode }: { mode: "login" | "signup" }) {
@@ -39,7 +40,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
       setMessage("확인 메일을 보냈습니다. 이메일 인증 후 로그인해 주세요.");
       return;
     }
-    router.replace(params.get("next") || "/");
+    router.replace(safeNextPath(params.get("next")));
     router.refresh();
   }
 

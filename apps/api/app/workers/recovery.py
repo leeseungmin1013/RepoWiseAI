@@ -30,6 +30,7 @@ def _mark_failed(job: Job, error_code: str) -> None:
             analysis_job.error_code = error_code
             analysis_job.error_detail = "Worker terminated before analysis completed."
             analysis_job.finished_at = datetime.now(UTC)
+            analysis_job.heartbeat_at = analysis_job.finished_at
             if snapshot is not None:
                 snapshot.status = "failed"
                 snapshot.error_message = "Worker terminated before analysis completed."
@@ -47,9 +48,15 @@ def _mark_failed(job: Job, error_code: str) -> None:
         else:
             return
         db.commit()
+    metadata = getattr(job, "meta", None) or {}
     logger.error(
         "orphaned_job_reconciled",
-        extra={"job_id": job.id, "error_code": error_code, "outcome": "failed"},
+        extra={
+            "job_id": job.id,
+            "trace_id": metadata.get("trace_id") or metadata.get("request_id"),
+            "error_code": error_code,
+            "outcome": "failed",
+        },
     )
 
 

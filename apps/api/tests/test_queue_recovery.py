@@ -19,11 +19,14 @@ def test_recovery_requeues_db_state_and_resets_only_stale_running_jobs(monkeypat
         status="running",
         stage="embedding",
         started_at=now - timedelta(minutes=20),
+        heartbeat_at=now - timedelta(minutes=20),
+        last_progress_at=now - timedelta(minutes=20),
         finished_at=now - timedelta(minutes=1),
         retry_count=1,
         error_code="old",
         error_detail="old",
         snapshot_id="snap-1",
+        trace_id="trace-analysis",
     )
     deep = SimpleNamespace(
         id="deep-1",
@@ -36,6 +39,7 @@ def test_recovery_requeues_db_state_and_resets_only_stale_running_jobs(monkeypat
         error_code="old",
         error_detail="old",
         rq_job_id="lost-job",
+        trace_id="trace-deep",
     )
     calls = []
 
@@ -76,6 +80,7 @@ def test_recovery_requeues_db_state_and_resets_only_stale_running_jobs(monkeypat
         analysis_job_timeout_seconds=600,
         deep_task_timeout_seconds=180,
         queue_recovery_batch_size=500,
+        analysis_max_retries=2,
     )
     monkeypatch.setattr(queue_recovery, "get_settings", lambda: settings)
     monkeypatch.setattr(queue_recovery, "SessionLocal", lambda: session)
@@ -85,15 +90,22 @@ def test_recovery_requeues_db_state_and_resets_only_stale_running_jobs(monkeypat
     monkeypatch.setattr(queue_recovery, "get_deep_task_queue", lambda: deep_queue)
     monkeypatch.setattr(
         queue_recovery,
+        "cancel_repository_analysis_job",
+        lambda snapshot_id, *, attempt: calls.append(("cancel", snapshot_id, attempt)) or True,
+    )
+    monkeypatch.setattr(
+        queue_recovery,
         "enqueue_repository_analysis",
-        lambda snapshot_id, *, queue: calls.append(
-            ("analysis", snapshot_id, queue is analysis_queue)) or "job-1",
+        lambda snapshot_id, *, queue, trace_id, attempt: calls.append(
+            ("analysis", snapshot_id, queue is analysis_queue, trace_id, attempt)
+        )
+        or "job-1",
     )
     monkeypatch.setattr(
         queue_recovery,
         "enqueue_deep_task",
-        lambda task_id, *, queue: calls.append(
-            ("deep", task_id, queue is deep_queue)) or task_id,
+        lambda task_id, *, queue, trace_id: calls.append(
+            ("deep", task_id, queue is deep_queue, trace_id)) or task_id,
     )
 
     summary = queue_recovery.recover_queue_jobs(now=now)
@@ -113,8 +125,9 @@ def test_recovery_requeues_db_state_and_resets_only_stale_running_jobs(monkeypat
     assert deep.status == "queued"
     assert deep.progress == 0
     assert deep.rq_job_id == "deep-1"
-    assert ("analysis", "snap-1", True) in calls
-    assert ("deep", "deep-1", True) in calls
+    assert ("analysis", "snap-1", True, "trace-analysis", 2) in calls
+    assert ("cancel", "snap-1", 1) in calls
+    assert ("deep", "deep-1", True, "trace-deep") in calls
     assert calls.count("commit") == 1
     assert "rollback" not in calls
 
@@ -135,6 +148,7 @@ def test_recovery_skips_when_another_worker_holds_the_lock(monkeypatch):
         analysis_job_timeout_seconds=600,
         deep_task_timeout_seconds=180,
         queue_recovery_batch_size=500,
+        analysis_max_retries=2,
     )
     monkeypatch.setattr(queue_recovery, "get_settings", lambda: settings)
     monkeypatch.setattr(queue_recovery, "SessionLocal", SessionStub)

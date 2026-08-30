@@ -4,7 +4,7 @@ import hashlib
 import math
 import re
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Callable, Iterator, Sequence
 from typing import Protocol
 
 from app.ai.gateway import MeteredOpenAIClient, extract_usage
@@ -23,7 +23,11 @@ class Embedder(Protocol):
     model_name: str
     dimensions: int
 
-    def embed_documents(self, texts: Sequence[str]) -> list[list[float]]: ...
+    def embed_documents(
+        self,
+        texts: Sequence[str],
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> list[list[float]]: ...
 
     def embed_query(self, text: str) -> list[float]: ...
 
@@ -53,8 +57,15 @@ class LocalHashEmbedder:
     model_name = "local-hash-v1"
     dimensions = EMBEDDING_DIMENSIONS
 
-    def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
-        return [self._embed(text) for text in texts]
+    def embed_documents(
+        self,
+        texts: Sequence[str],
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> list[list[float]]:
+        vectors = [self._embed(text) for text in texts]
+        if on_progress:
+            on_progress(len(texts), len(texts))
+        return vectors
 
     def embed_query(self, text: str) -> list[float]:
         return self._embed(text)
@@ -72,33 +83,66 @@ class LocalHashEmbedder:
 class OpenAIEmbedder:
     dimensions = EMBEDDING_DIMENSIONS
 
-    def __init__(self, api_key: str, model_name: str) -> None:
+    def __init__(self, api_key: str, model_name: str, settings: Settings) -> None:
         self.model_name = model_name
         self.usage: dict[str, int] = {}
-        self._client = MeteredOpenAIClient(api_key, recorder=self._record_usage)
+        self._batch_max_inputs = settings.embedding_batch_max_inputs
+        self._batch_max_characters = settings.embedding_batch_max_characters
+        self._client = MeteredOpenAIClient(
+            api_key,
+            recorder=self._record_usage,
+            timeout=settings.openai_timeout_seconds,
+            max_retries=settings.openai_max_retries,
+        )
 
     def _record_usage(self, response: object, **_: object) -> None:
         current = extract_usage(response, embedding=True).as_dict()
         for key, value in current.items():
             self.usage[key] = self.usage.get(key, 0) + value
 
-    def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
+    def embed_documents(
+        self,
+        texts: Sequence[str],
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> list[list[float]]:
         return self._embed_many(
             [
                 f"Retrieve this source-code evidence for a developer question:\n{text}"
                 for text in texts
-            ]
+            ],
+            on_progress=on_progress,
         )
 
     def embed_query(self, text: str) -> list[float]:
         prompt = f"Find source code that answers this developer question:\n{text}"
         return self._embed_many([prompt])[0]
 
-    def _embed_many(self, texts: Sequence[str]) -> list[list[float]]:
+    def _batches(self, texts: Sequence[str]) -> Iterator[list[str]]:
+        batch: list[str] = []
+        characters = 0
+        for text in texts:
+            value = text[:24_000] or " "
+            if batch and (
+                len(batch) >= self._batch_max_inputs
+                or characters + len(value) > self._batch_max_characters
+            ):
+                yield batch
+                batch = []
+                characters = 0
+            batch.append(value)
+            characters += len(value)
+        if batch:
+            yield batch
+
+    def _embed_many(
+        self,
+        texts: Sequence[str],
+        *,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> list[list[float]]:
         vectors: list[list[float]] = []
-        batch_size = 128
-        for start in range(0, len(texts), batch_size):
-            inputs = [text[:24_000] or " " for text in texts[start : start + batch_size]]
+        total = len(texts)
+        for inputs in self._batches(texts):
             response = self._client.embeddings_create(
                 model=self.model_name,
                 input=inputs,
@@ -109,6 +153,8 @@ class OpenAIEmbedder:
             if len(ordered) != len(inputs):
                 raise EmbeddingUnavailable("OpenAI returned an unexpected embedding batch")
             vectors.extend(_normalized(list(item.embedding)) for item in ordered)
+            if on_progress:
+                on_progress(len(vectors), total)
         if any(len(vector) != self.dimensions for vector in vectors):
             raise EmbeddingUnavailable("Embedding dimensions do not match the database index")
         return vectors
@@ -125,11 +171,11 @@ def build_embedder(settings: Settings, model_name: str | None = None) -> Embedde
         return LocalHashEmbedder()
     if requested == "auto":
         if settings.openai_api_key:
-            return OpenAIEmbedder(settings.openai_api_key, settings.embedding_model)
+            return OpenAIEmbedder(settings.openai_api_key, settings.embedding_model, settings)
         return LocalHashEmbedder()
     if requested == "openai" or requested.startswith("text-embedding-"):
         if not settings.openai_api_key:
             raise EmbeddingUnavailable("OPENAI_API_KEY is required for OpenAI embeddings")
         model = settings.embedding_model if requested == "openai" else requested
-        return OpenAIEmbedder(settings.openai_api_key, model)
+        return OpenAIEmbedder(settings.openai_api_key, model, settings)
     raise EmbeddingUnavailable(f"Unsupported embedding provider or model: {requested}")

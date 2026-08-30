@@ -7,6 +7,7 @@ from sqlalchemy import select
 from app.ai.gateway import extract_usage
 from app.core.config import Settings, get_settings
 from app.core.db import SessionLocal
+from app.core.model_routing import ModelRoutingPolicy
 from app.models import DeepTask
 from app.navigation.change_brief import generate_change_brief
 from app.services.grounded_chat import GroundedGenerationCancelled, create_grounded_message
@@ -20,9 +21,10 @@ def _utc_now() -> datetime:
 
 
 def _generation_route(task: DeepTask, settings: Settings) -> tuple[str, str]:
-    if task.kind == "roadmap_proposal":
-        return settings.deep_escalation_model, settings.deep_escalation_reasoning_effort
-    return settings.deep_model, settings.deep_reasoning_effort
+    policy = ModelRoutingPolicy.from_settings(settings)
+    role = "deep_escalation" if task.kind == "roadmap_proposal" else "deep"
+    route = policy.for_role(role)
+    return route.model, route.reasoning_effort or "medium"
 
 
 def _task_should_continue(task_id: str) -> bool:
@@ -82,6 +84,7 @@ def run_deep_task(task_id: str) -> None:
                 return
 
             if task.kind == "research_materials":
+                research_route = ModelRoutingPolicy.from_settings(settings).for_role("research")
                 usage: dict[str, int] = {}
 
                 def record(response, *, embedding: bool = False) -> None:
@@ -104,7 +107,7 @@ def run_deep_task(task_id: str) -> None:
                 task.result_payload = research.model_dump(mode="json")
                 task.model_metadata = {
                     **task.model_metadata,
-                    "model": settings.research_model,
+                    "model": research_route.model,
                     "source_count": len(research.sources),
                     "prompt_version": "official-research-v1",
                 }
@@ -122,7 +125,7 @@ def run_deep_task(task_id: str) -> None:
                             idempotency_key=f"deep-task:{task.id}",
                         ),
                         provider="openai",
-                        model=settings.research_model,
+                        model=research_route.model,
                         usage=usage,
                     )
                 return

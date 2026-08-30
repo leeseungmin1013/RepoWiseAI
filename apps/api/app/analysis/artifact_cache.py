@@ -97,6 +97,7 @@ def embed_documents_with_cache(
     model: str,
     dimensions: int,
     prompt_version: str,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> tuple[list[list[float]], dict[str, int]]:
     hashes = [text_hash(item) for item in texts]
     cached = (
@@ -120,7 +121,15 @@ def embed_documents_with_cache(
             missing_hashes.append(item_hash)
             missing_texts.append(item_text)
     if missing_texts:
-        generated = embedder.embed_documents(missing_texts)
+        if on_progress:
+            reused = len(texts) - len(missing_texts)
+
+            def report(completed: int, _total: int) -> None:
+                on_progress(reused + completed, len(texts))
+
+            generated = embedder.embed_documents(missing_texts, on_progress=report)
+        else:
+            generated = embedder.embed_documents(missing_texts)
         for item_hash, vector in zip(missing_hashes, generated, strict=True):
             value = list(vector)
             by_hash[item_hash] = value

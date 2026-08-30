@@ -19,6 +19,7 @@ import type {
   MasteryOverview,
   RemediationBranch,
   RemediationMode,
+  RoadmapProposal,
   Snapshot,
   SourceFile,
   StartHere,
@@ -46,6 +47,7 @@ type Props = {
   learningPath: LearningPath | null;
   learningSession: LearningSession | null;
   remediation: RemediationBranch | null;
+  roadmapProposal: RoadmapProposal | null;
   journeyBusy: boolean;
   activity: LearningActivity | null;
   activityAttempt: ActivityAttemptSummary | null;
@@ -72,6 +74,8 @@ type Props = {
   ) => void;
   onHelp: (mode: RemediationMode) => void;
   onCompleteHelp: () => void;
+  onApplyRoadmap: () => void;
+  onRejectRoadmap: () => void;
   onReplan: () => void;
   onSubmitActivity: (selectedChoiceId: string) => void;
   onDismissDeepTask: () => void;
@@ -91,6 +95,7 @@ export function AssistantPanel({
   learningPath,
   learningSession,
   remediation,
+  roadmapProposal,
   journeyBusy,
   activity,
   activityAttempt,
@@ -114,6 +119,8 @@ export function AssistantPanel({
   onLearningFeedback,
   onHelp,
   onCompleteHelp,
+  onApplyRoadmap,
+  onRejectRoadmap,
   onReplan,
   onSubmitActivity,
   onDismissDeepTask,
@@ -188,6 +195,7 @@ export function AssistantPanel({
               asking={asking}
               busy={journeyBusy}
               file={file}
+              onApplyRoadmap={onApplyRoadmap}
               onAsk={onAsk}
               onCompleteHelp={onCompleteHelp}
               onFeedback={onLearningFeedback}
@@ -195,11 +203,13 @@ export function AssistantPanel({
               onOpenEvidence={onOpenEvidence}
               onOpenLesson={onOpenLesson}
               onOpenLines={onOpenLines}
+              onRejectRoadmap={onRejectRoadmap}
               onReplan={onReplan}
               onTeachingStyleChange={onTeachingStyleChange}
               onSubmitActivity={onSubmitActivity}
               path={learningPath}
               remediation={remediation}
+              roadmapProposal={roadmapProposal}
               selection={selection}
               session={learningSession}
               teachingStyle={teachingStyle}

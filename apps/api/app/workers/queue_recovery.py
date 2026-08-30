@@ -36,6 +36,7 @@ def recover_queue_jobs(*, now: datetime | None = None) -> dict[str, object]:
     """
 
     settings = get_settings()
+    analysis_max_retries = max(3, settings.analysis_max_retries)
     current_time = now or _utc_now()
     analysis_stale_before = current_time - timedelta(
         seconds=max(
@@ -91,7 +92,7 @@ def recover_queue_jobs(*, now: datetime | None = None) -> dict[str, object]:
                                         "worker_terminated",
                                     }
                                 )
-                                & (AnalysisJob.retry_count < settings.analysis_max_retries)
+                                & (AnalysisJob.retry_count < analysis_max_retries)
                             ),
                         )
                     )
@@ -103,7 +104,7 @@ def recover_queue_jobs(*, now: datetime | None = None) -> dict[str, object]:
             analysis_queue = get_analysis_queue() if analysis_jobs else None
             for job in analysis_jobs:
                 if job.status in {"running", "failed"}:
-                    if job.retry_count >= settings.analysis_max_retries:
+                    if job.retry_count >= analysis_max_retries:
                         job.status = "failed"
                         job.error_code = "analysis_retry_exhausted"
                         job.error_detail = "Analysis stopped making progress after retry limit."

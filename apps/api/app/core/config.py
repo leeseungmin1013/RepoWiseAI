@@ -141,6 +141,11 @@ class Settings(BaseSettings):
         ]
 
     @property
+    def effective_analysis_max_retries(self) -> int:
+        """Keep older deployed environments from pinning the retired two-attempt limit."""
+        return max(3, self.analysis_max_retries)
+
+    @property
     def resolved_supabase_issuer(self) -> str | None:
         if self.supabase_jwt_issuer:
             return self.supabase_jwt_issuer.rstrip("/")

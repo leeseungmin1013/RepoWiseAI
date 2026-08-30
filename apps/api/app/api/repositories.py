@@ -254,7 +254,7 @@ def retry_snapshot_analysis(snapshot_id: str, db: SessionDep, auth: AuthDep):
     runtime_state, _ = analysis_runtime_state(job)
     if job.status != "failed" and runtime_state != "stalled":
         raise HTTPException(status_code=409, detail="Analysis is still active")
-    if job.retry_count >= settings.analysis_max_retries:
+    if job.retry_count >= settings.effective_analysis_max_retries:
         raise HTTPException(status_code=409, detail="Analysis retry limit reached")
     cancel_repository_analysis_job(snapshot.id, attempt=job.retry_count)
     job.retry_count += 1

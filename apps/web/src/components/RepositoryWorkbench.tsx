@@ -735,7 +735,7 @@ export function RepositoryWorkbench() {
       setSnapshots((current) =>
         current.map((item) => (item.id === nextSnapshot.id ? nextSnapshot : item)),
       );
-      setReuseNotice("정체된 분석을 새 작업으로 다시 시작했습니다.");
+      setReuseNotice("분석을 새 작업으로 다시 시작했습니다.");
     } catch (reason) {
       setError(errorMessage(reason));
     } finally {
@@ -1429,6 +1429,8 @@ export function RepositoryWorkbench() {
     return Math.round((stageIndex / (STAGES.length - 1)) * 100);
   }, [snapshot, stageIndex]);
   const analysisStalled = snapshot?.job?.runtime_state === "stalled";
+  const analysisFailed = snapshot?.status === "failed";
+  const canRetryAnalysis = analysisStalled || analysisFailed;
   const isAnalyzing =
     snapshot &&
     !analysisStalled &&
@@ -1439,6 +1441,8 @@ export function RepositoryWorkbench() {
       : snapshot?.job?.stalled_reason === "analysis_deadline_exceeded"
         ? "분석 제한 시간을 초과했습니다. 새 작업으로 다시 시도할 수 있습니다."
         : "분석 진행이 멈췄습니다. 새 작업으로 다시 시도할 수 있습니다.";
+  const failedMessage =
+    "분석 작업이 중단되었습니다. 아래에서 새 작업으로 다시 시도할 수 있습니다.";
 
   return (
     <main className="app-shell">
@@ -1520,7 +1524,8 @@ export function RepositoryWorkbench() {
                   : (STAGE_LABELS[stage] ?? stage)}
               </span>
               {analysisStalled ? <small>{stalledMessage}</small> : null}
-              {analysisStalled ? (
+              {analysisFailed ? <small>{failedMessage}</small> : null}
+              {canRetryAnalysis ? (
                 <button
                   className="analysis-retry"
                   disabled={submitting}
@@ -1555,10 +1560,10 @@ export function RepositoryWorkbench() {
         ) : null}
       </section>
 
-      {error || snapshot?.error_message ? (
+      {error || snapshot?.error_message || snapshot?.job?.error_detail ? (
         <div className="error-banner" role="alert">
           <TriangleAlert aria-hidden size={16} />
-          <span>{error ?? snapshot?.error_message}</span>
+          <span>{error ?? snapshot?.error_message ?? snapshot?.job?.error_detail}</span>
         </div>
       ) : null}
 

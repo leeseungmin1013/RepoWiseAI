@@ -604,6 +604,58 @@ describe("RepositoryWorkbench map-first entry", () => {
     expect(await screen.findByText("대기 중")).toBeTruthy();
   });
 
+  it("shows the persisted failure reason and retries a failed analysis", async () => {
+    const failedSnapshot = {
+      ...snapshot,
+      status: "failed",
+      error_message: "Worker terminated before analysis completed.",
+      job: {
+        id: "job-failed",
+        snapshot_id: snapshot.id,
+        stage: "embedding",
+        status: "failed",
+        progress_current: 2,
+        progress_total: 10,
+        error_code: "worker_killed",
+        error_detail: "Worker terminated before analysis completed.",
+        retry_count: 0,
+        runtime_state: "terminal",
+        stalled_reason: null,
+        created_at: "2026-07-19T00:00:00Z",
+        started_at: "2026-07-19T00:00:00Z",
+        heartbeat_at: "2026-07-19T00:01:00Z",
+        last_progress_at: "2026-07-19T00:01:00Z",
+        finished_at: "2026-07-19T00:02:00Z",
+      },
+    };
+    const retriedSnapshot = {
+      ...failedSnapshot,
+      status: "pending",
+      error_message: null,
+      job: {
+        ...failedSnapshot.job,
+        status: "queued",
+        stage: "pending",
+        error_code: null,
+        error_detail: null,
+        retry_count: 1,
+        runtime_state: "queued",
+        finished_at: null,
+      },
+    };
+    mocks.listSnapshots.mockResolvedValueOnce([failedSnapshot]);
+    mocks.retrySnapshot.mockResolvedValueOnce(retriedSnapshot);
+
+    render(<RepositoryWorkbench />);
+
+    expect(await screen.findByText("분석 실패")).toBeTruthy();
+    expect(screen.getByText("Worker terminated before analysis completed.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "분석 다시 시도" }));
+
+    await waitFor(() => expect(mocks.retrySnapshot).toHaveBeenCalledWith(snapshot.id));
+    expect(await screen.findByText("대기 중")).toBeTruthy();
+  });
+
   it("loads Repository Structure without starting assessment or explorer APIs", async () => {
     render(<RepositoryWorkbench />);
 

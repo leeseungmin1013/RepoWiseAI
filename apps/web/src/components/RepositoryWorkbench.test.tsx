@@ -555,7 +555,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("RepositoryWorkbench map-first entry", () => {
-  it("stops polling a stalled analysis and retries it with a new server job", async () => {
+  it("keeps polling a stalled analysis and retries it with a new server job", async () => {
     const stalledSnapshot = {
       ...snapshot,
       status: "analyzing",
@@ -597,7 +597,6 @@ describe("RepositoryWorkbench map-first entry", () => {
 
     expect(await screen.findByText("분석 정체")).toBeTruthy();
     expect(screen.getByText(/분석 진행이 멈췄습니다/)).toBeTruthy();
-    expect(mocks.getSnapshot).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "분석 다시 시도" }));
 
     await waitFor(() => expect(mocks.retrySnapshot).toHaveBeenCalledWith(snapshot.id));

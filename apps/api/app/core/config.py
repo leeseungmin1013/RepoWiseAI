@@ -60,7 +60,8 @@ class Settings(BaseSettings):
     queue_recovery_interval_seconds: int = 60
     analysis_queue_stall_seconds: int = 120
     analysis_progress_stall_seconds: int = 180
-    analysis_max_retries: int = 2
+    analysis_heartbeat_interval_seconds: int = 15
+    analysis_max_retries: int = 3
     worker_heartbeat_stale_seconds: int = 180
     research_model: str = "gpt-5.6-terra"
     research_reasoning_effort: str = "medium"
@@ -78,7 +79,7 @@ class Settings(BaseSettings):
     max_repository_bytes: int = 30 * 1024 * 1024
     max_file_bytes: int = 1024 * 1024
     max_archive_bytes: int = 50 * 1024 * 1024
-    analysis_job_timeout_seconds: int = 600
+    analysis_job_timeout_seconds: int = 1800
     openai_timeout_seconds: float = 60.0
     openai_max_retries: int = 2
     embedding_batch_max_inputs: int = 64

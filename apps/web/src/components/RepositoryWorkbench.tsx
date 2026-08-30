@@ -325,8 +325,7 @@ export function RepositoryWorkbench() {
 
   const polledSnapshotId =
     snapshot &&
-    ["pending", "analyzing"].includes(snapshot.status) &&
-    snapshot.job?.runtime_state !== "stalled"
+    ["pending", "analyzing"].includes(snapshot.status)
       ? snapshot.id
       : null;
 
@@ -337,8 +336,10 @@ export function RepositoryWorkbench() {
     let cancelled = false;
     let timer: number | null = null;
     const poll = async () => {
+      let stalled = false;
       try {
         const nextSnapshot = await api.getSnapshot(snapshotId);
+        stalled = nextSnapshot.job?.runtime_state === "stalled";
         if (!cancelled) {
           setSnapshot(nextSnapshot);
           setSnapshots((current) =>
@@ -347,8 +348,7 @@ export function RepositoryWorkbench() {
         }
         if (
           nextSnapshot.status === "ready" ||
-          nextSnapshot.status === "failed" ||
-          nextSnapshot.job?.runtime_state === "stalled"
+          nextSnapshot.status === "failed"
         ) {
           return;
         }
@@ -357,7 +357,14 @@ export function RepositoryWorkbench() {
       }
       if (cancelled) return;
       const elapsed = Date.now() - startedAt;
-      const delay = elapsed >= 120_000 ? 10_000 : elapsed >= 30_000 ? 5_000 : 2_000;
+      const delay =
+        stalled
+          ? 15_000
+          : elapsed >= 120_000
+            ? 10_000
+            : elapsed >= 30_000
+              ? 5_000
+              : 2_000;
       timer = window.setTimeout(() => void poll(), delay);
     };
     timer = window.setTimeout(() => void poll(), 2_000);

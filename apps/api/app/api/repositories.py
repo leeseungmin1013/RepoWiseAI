@@ -107,15 +107,15 @@ def analysis_runtime_state(
         if (current_time - queued_since).total_seconds() > settings.analysis_queue_stall_seconds:
             return "stalled", "worker_unavailable"
         return "queued", None
-    reference = job.last_progress_at or job.heartbeat_at or job.started_at or job.created_at
     if job.started_at and (
         current_time - job.started_at
     ).total_seconds() > settings.analysis_job_timeout_seconds:
         return "stalled", "analysis_deadline_exceeded"
+    heartbeat_reference = job.heartbeat_at or job.started_at or job.created_at
     if (
-        current_time - reference
+        current_time - heartbeat_reference
     ).total_seconds() > settings.analysis_progress_stall_seconds:
-        return "stalled", "progress_timeout"
+        return "stalled", "worker_unavailable"
     return "running", None
 
 

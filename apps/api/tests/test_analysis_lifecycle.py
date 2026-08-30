@@ -16,7 +16,7 @@ def _job(now: datetime, **overrides):
     return SimpleNamespace(**values)
 
 
-def test_analysis_runtime_state_detects_queue_and_progress_stalls() -> None:
+def test_analysis_runtime_state_detects_queue_and_worker_stalls() -> None:
     now = datetime(2026, 8, 30, 12, 0, tzinfo=UTC)
 
     assert analysis_runtime_state(_job(now), now=now) == ("queued", None)
@@ -28,11 +28,21 @@ def test_analysis_runtime_state_detects_queue_and_progress_stalls() -> None:
             now,
             status="running",
             started_at=now - timedelta(minutes=5),
-            heartbeat_at=now - timedelta(minutes=4),
+            heartbeat_at=now,
             last_progress_at=now - timedelta(minutes=4),
         ),
         now=now,
-    ) == ("stalled", "progress_timeout")
+    ) == ("running", None)
+    assert analysis_runtime_state(
+        _job(
+            now,
+            status="running",
+            started_at=now - timedelta(minutes=5),
+            heartbeat_at=now - timedelta(minutes=4),
+            last_progress_at=now,
+        ),
+        now=now,
+    ) == ("stalled", "worker_unavailable")
 
 
 def test_analysis_runtime_state_prioritizes_overall_deadline() -> None:
@@ -41,7 +51,7 @@ def test_analysis_runtime_state_prioritizes_overall_deadline() -> None:
         _job(
             now,
             status="running",
-            started_at=now - timedelta(minutes=11),
+            started_at=now - timedelta(minutes=31),
             heartbeat_at=now,
             last_progress_at=now,
         ),

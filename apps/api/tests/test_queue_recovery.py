@@ -78,6 +78,8 @@ def test_recovery_requeues_db_state_and_resets_only_stale_running_jobs(monkeypat
     settings = SimpleNamespace(
         queue_recovery_stale_seconds=900,
         analysis_job_timeout_seconds=600,
+        analysis_progress_stall_seconds=180,
+        worker_heartbeat_stale_seconds=180,
         deep_task_timeout_seconds=180,
         queue_recovery_batch_size=500,
         analysis_max_retries=2,
@@ -146,6 +148,8 @@ def test_recovery_skips_when_another_worker_holds_the_lock(monkeypatch):
     settings = SimpleNamespace(
         queue_recovery_stale_seconds=900,
         analysis_job_timeout_seconds=600,
+        analysis_progress_stall_seconds=180,
+        worker_heartbeat_stale_seconds=180,
         deep_task_timeout_seconds=180,
         queue_recovery_batch_size=500,
         analysis_max_retries=2,

@@ -38,7 +38,10 @@ def recover_queue_jobs(*, now: datetime | None = None) -> dict[str, object]:
     settings = get_settings()
     current_time = now or _utc_now()
     analysis_stale_before = current_time - timedelta(
-        seconds=max(settings.queue_recovery_stale_seconds, settings.analysis_job_timeout_seconds)
+        seconds=max(
+            settings.analysis_progress_stall_seconds,
+            settings.worker_heartbeat_stale_seconds,
+        )
     )
     deep_stale_before = current_time - timedelta(
         seconds=max(settings.queue_recovery_stale_seconds, settings.deep_task_timeout_seconds)
@@ -73,12 +76,22 @@ def recover_queue_jobs(*, now: datetime | None = None) -> dict[str, object]:
                                 & (AnalysisJob.started_at.is_not(None))
                                 & (
                                     func.coalesce(
-                                        AnalysisJob.last_progress_at,
                                         AnalysisJob.heartbeat_at,
                                         AnalysisJob.started_at,
                                     )
                                     < analysis_stale_before
                                 )
+                            ),
+                            (
+                                (AnalysisJob.status == "failed")
+                                & AnalysisJob.error_code.in_(
+                                    {
+                                        "analysis_retry_exhausted",
+                                        "worker_killed",
+                                        "worker_terminated",
+                                    }
+                                )
+                                & (AnalysisJob.retry_count < settings.analysis_max_retries)
                             ),
                         )
                     )
@@ -89,7 +102,7 @@ def recover_queue_jobs(*, now: datetime | None = None) -> dict[str, object]:
             )
             analysis_queue = get_analysis_queue() if analysis_jobs else None
             for job in analysis_jobs:
-                if job.status == "running":
+                if job.status in {"running", "failed"}:
                     if job.retry_count >= settings.analysis_max_retries:
                         job.status = "failed"
                         job.error_code = "analysis_retry_exhausted"
@@ -103,9 +116,10 @@ def recover_queue_jobs(*, now: datetime | None = None) -> dict[str, object]:
                             db, job.cost_reservation_id, commit=False
                         )
                         continue
-                    cancel_repository_analysis_job(
-                        job.snapshot_id, attempt=job.retry_count
-                    )
+                    if job.status == "running":
+                        cancel_repository_analysis_job(
+                            job.snapshot_id, attempt=job.retry_count
+                        )
                     job.status = "queued"
                     job.stage = "pending"
                     job.started_at = None

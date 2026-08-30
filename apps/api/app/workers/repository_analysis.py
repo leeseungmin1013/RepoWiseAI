@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import shutil
 import tarfile
@@ -8,9 +9,10 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
+from threading import Event, Thread
 from urllib.parse import urlsplit
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import selectinload
 
 from app.ai.embeddings import build_embedder
@@ -54,6 +56,8 @@ from app.services.github import GitHubClient, GitHubSnapshot
 from app.services.usage import UsageContext, UsageService
 from app.workers.context import bind_worker_job_context
 
+logger = logging.getLogger(__name__)
+
 
 def _reserve_chunk_template(content_hash: str, known_hashes: set[str]) -> bool:
     """Reserve one template per content hash even when the session does not autoflush."""
@@ -65,6 +69,36 @@ def _reserve_chunk_template(content_hash: str, known_hashes: set[str]) -> bool:
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _memory_rss_mb() -> float | None:
+    try:
+        import resource
+
+        return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1)
+    except (ImportError, OSError):
+        return None
+
+
+def _write_job_heartbeat(snapshot_id: str) -> None:
+    with SessionLocal() as db:
+        db.execute(
+            update(AnalysisJob)
+            .where(
+                AnalysisJob.snapshot_id == snapshot_id,
+                AnalysisJob.status == "running",
+            )
+            .values(heartbeat_at=_utc_now())
+        )
+        db.commit()
+
+
+def _heartbeat_loop(snapshot_id: str, stop: Event, interval_seconds: int) -> None:
+    while not stop.wait(interval_seconds):
+        try:
+            _write_job_heartbeat(snapshot_id)
+        except Exception:
+            logger.exception("repository_analysis_heartbeat_failed")
 
 
 def _touch_job(
@@ -110,6 +144,11 @@ def _set_stage(
             _touch_job(job, current=current, total=total)
             job.last_progress_at = job.heartbeat_at
         db.commit()
+    logger.info(
+        "repository_analysis_stage_started stage=%s rss_mb=%s",
+        stage,
+        _memory_rss_mb(),
+    )
 
 
 def _safe_workspace(snapshot_id: str) -> Path:
@@ -599,6 +638,18 @@ def _resolve_parsed_edge(
 def analyze_repository(snapshot_id: str) -> None:
     bind_worker_job_context(snapshot_id=snapshot_id)
     settings = get_settings()
+    heartbeat_stop = Event()
+    heartbeat_thread = Thread(
+        target=_heartbeat_loop,
+        args=(
+            snapshot_id,
+            heartbeat_stop,
+            settings.analysis_heartbeat_interval_seconds,
+        ),
+        name=f"analysis-heartbeat-{snapshot_id}",
+        daemon=True,
+    )
+    heartbeat_thread.start()
     try:
         _set_stage(snapshot_id, "fetching")
         with SessionLocal() as db:
@@ -978,52 +1029,85 @@ def analyze_repository(snapshot_id: str) -> None:
                     )
                 ).all()
             )
+            total_chunk_count = len(chunk_inputs)
+            source_file_count = len(source_files)
+            source_total_bytes = sum(file.byte_size for file in source_files)
+            reused_embeddings_by_path: dict[str, int] = defaultdict(int)
+            for file_record, draft in chunk_inputs:
+                if text_hash(draft.embedding_text) in existing_embedding_hashes:
+                    reused_embeddings_by_path[file_record.path] += 1
 
-            def commit_embedding_progress(current: int, total: int) -> None:
-                _touch_job(job, current=current, total=total)
-                db.commit()
+            chunk_ids = {draft.key: new_id("chk") for _, draft in chunk_inputs}
+            embedding_metrics = {"embedding_reused": 0, "embedding_created": 0}
+            batch_size = max(1, settings.embedding_batch_max_inputs)
+            for batch_start in range(0, total_chunk_count, batch_size):
+                batch = chunk_inputs[batch_start : batch_start + batch_size]
 
-            embeddings, embedding_metrics = embed_documents_with_cache(
-                db,
-                texts=[draft.embedding_text for _, draft in chunk_inputs],
-                embedder=embedder,
-                provider=settings.embedding_provider,
-                model=embedder.model_name,
-                dimensions=settings.embedding_dimensions,
-                prompt_version=settings.embedding_prompt_version,
-                on_progress=commit_embedding_progress if job else None,
-            )
-            reuse_metrics.update(embedding_metrics)
+                def commit_embedding_progress(
+                    current: int,
+                    _total: int,
+                    batch_offset: int = batch_start,
+                ) -> None:
+                    _touch_job(
+                        job,
+                        current=batch_offset + current,
+                        total=total_chunk_count,
+                    )
+                    db.commit()
 
-            chunk_records: dict[str, CodeChunk] = {}
-            parent_keys: dict[str, str | None] = {}
-            for (file_record, draft), embedding in zip(chunk_inputs, embeddings, strict=True):
-                chunk = CodeChunk(
-                    id=new_id("chk"),
-                    snapshot_id=snapshot_id,
-                    file_id=file_record.id,
-                    symbol_id=draft.symbol_id,
-                    parent_chunk_id=None,
-                    chunk_type=draft.chunk_type,
-                    ordinal=draft.ordinal,
-                    title=draft.title,
-                    language=draft.language,
-                    start_line=draft.start_line,
-                    end_line=draft.end_line,
-                    content=draft.content,
-                    search_text=draft.search_text,
-                    embedding=embedding,
-                    embedding_model=embedder.model_name,
-                    content_hash=draft.content_hash,
-                    metadata_json=draft.metadata,
+                embeddings, batch_metrics = embed_documents_with_cache(
+                    db,
+                    texts=[draft.embedding_text for _, draft in batch],
+                    embedder=embedder,
+                    provider=settings.embedding_provider,
+                    model=embedder.model_name,
+                    dimensions=settings.embedding_dimensions,
+                    prompt_version=settings.embedding_prompt_version,
+                    on_progress=commit_embedding_progress if job else None,
                 )
-                db.add(chunk)
-                chunk_records[draft.key] = chunk
-                parent_keys[draft.key] = draft.parent_key
-            db.flush()
-            for key, parent_key in parent_keys.items():
-                if parent_key:
-                    chunk_records[key].parent_chunk_id = chunk_records[parent_key].id
+                for metric, value in batch_metrics.items():
+                    embedding_metrics[metric] += value
+                for (file_record, draft), embedding in zip(batch, embeddings, strict=True):
+                    db.add(
+                        CodeChunk(
+                            id=chunk_ids[draft.key],
+                            snapshot_id=snapshot_id,
+                            file_id=file_record.id,
+                            symbol_id=draft.symbol_id,
+                            parent_chunk_id=(
+                                chunk_ids.get(draft.parent_key) if draft.parent_key else None
+                            ),
+                            chunk_type=draft.chunk_type,
+                            ordinal=draft.ordinal,
+                            title=draft.title,
+                            language=draft.language,
+                            start_line=draft.start_line,
+                            end_line=draft.end_line,
+                            content=draft.content,
+                            search_text=draft.search_text,
+                            embedding=embedding,
+                            embedding_model=embedder.model_name,
+                            content_hash=draft.content_hash,
+                            metadata_json=draft.metadata,
+                        )
+                    )
+                _touch_job(
+                    job,
+                    current=min(batch_start + len(batch), total_chunk_count),
+                    total=total_chunk_count,
+                )
+                db.commit()
+                logger.info(
+                    "repository_analysis_embedding_batch completed=%s total=%s rss_mb=%s",
+                    min(batch_start + len(batch), total_chunk_count),
+                    total_chunk_count,
+                    _memory_rss_mb(),
+                )
+            reuse_metrics.update(embedding_metrics)
+            chunk_inputs.clear()
+            parse_results.clear()
+            symbols_by_file.clear()
+            source_files.clear()
 
             base_files_by_path: dict[str, FileRecord] = {}
             if snapshot.base_snapshot_id:
@@ -1037,9 +1121,6 @@ def analyze_repository(snapshot_id: str) -> None:
             db.execute(
                 delete(SnapshotFileLineage).where(SnapshotFileLineage.snapshot_id == snapshot_id)
             )
-            chunks_by_file: dict[str, list[object]] = defaultdict(list)
-            for file_record, draft in chunk_inputs:
-                chunks_by_file[file_record.path].append(draft)
             for path, file_record in file_records.items():
                 previous_path = renamed_from.get(path)
                 base_file = base_files_by_path.get(previous_path or path)
@@ -1051,11 +1132,6 @@ def analyze_repository(snapshot_id: str) -> None:
                     change_kind = "modified"
                 else:
                     change_kind = "added"
-                reused_embeddings = sum(
-                    1
-                    for draft in chunks_by_file.get(path, [])
-                    if text_hash(draft.embedding_text) in existing_embedding_hashes
-                )
                 db.add(
                     SnapshotFileLineage(
                         snapshot_id=snapshot_id,
@@ -1066,7 +1142,7 @@ def analyze_repository(snapshot_id: str) -> None:
                         change_kind=change_kind,
                         reused_parse=parse_reused_by_path.get(path, False),
                         reused_chunks=change_kind in {"unchanged", "renamed"},
-                        reused_embeddings=reused_embeddings,
+                        reused_embeddings=reused_embeddings_by_path[path],
                     )
                 )
 
@@ -1111,11 +1187,11 @@ def analyze_repository(snapshot_id: str) -> None:
                 )
             snapshot.status = "ready"
             snapshot.ready_at = _utc_now()
-            snapshot.file_count = len(source_files)
+            snapshot.file_count = source_file_count
             snapshot.symbol_count = len(symbol_ids)
             snapshot.edge_count = edge_count
-            snapshot.chunk_count = len(chunk_inputs)
-            snapshot.total_bytes = sum(file.byte_size for file in source_files)
+            snapshot.chunk_count = total_chunk_count
+            snapshot.total_bytes = source_total_bytes
             snapshot.parser_version = SEMANTIC_GRAPH_VERSION
             snapshot.index_version = settings.retrieval_index_schema_version
             snapshot.embedding_model = embedder.model_name
@@ -1129,8 +1205,8 @@ def analyze_repository(snapshot_id: str) -> None:
             job.stage = "ready"
             job.status = "finished"
             job.reuse_metrics = dict(snapshot.change_summary)
-            job.progress_current = len(chunk_inputs)
-            job.progress_total = len(chunk_inputs)
+            job.progress_current = total_chunk_count
+            job.progress_total = total_chunk_count
             job.finished_at = _utc_now()
             job.heartbeat_at = job.finished_at
             job.last_progress_at = job.finished_at
@@ -1156,3 +1232,6 @@ def analyze_repository(snapshot_id: str) -> None:
                 job.finished_at = _utc_now()
             db.commit()
         raise
+    finally:
+        heartbeat_stop.set()
+        heartbeat_thread.join(timeout=2)
